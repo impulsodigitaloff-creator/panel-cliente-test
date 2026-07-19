@@ -488,33 +488,7 @@ async function processReminders() {
       const conn = connections.get(biz.id);
       if (!conn) continue;
 
-      // Recordatorio 1h al negocio
-      const upcoming = d.prepare(`
-        SELECT a.*, c.name as customer_name, c.phone as customer_phone,
-               s.name as service_name, e.name as employee_name
-        FROM appointments a
-        LEFT JOIN customers c ON a.customer_id = c.id
-        LEFT JOIN services s ON a.service_id = s.id
-        LEFT JOIN employees e ON a.employee_id = e.id
-        WHERE a.business_id = ? AND a.date = date('now','-3 hours')
-          AND a.time <= time('now','-3 hours','+1 hour')
-          AND a.time > time('now','-3 hours')
-          AND a.status IN ('pending','confirmed') AND a.reminder_sent = 0
-        ORDER BY a.time
-      `).all(biz.id);
-      for (const appt of upcoming) {
-        const bizPhone = biz.phone || '';
-        const jid = bizPhone.includes('@') ? bizPhone : (bizPhone ? bizPhone + '@s.whatsapp.net' : null);
-        if (!jid) continue;
-        const msg = `🔔 Recordatorio de turno\n\n👤 ${appt.customer_name || 'Cliente'}\n✂️ ${appt.service_name || 'Servicio'}\n🕐 ${appt.time}${appt.employee_name ? '\n💅 ' + appt.employee_name : ''}\n📞 ${appt.customer_phone || 'sin teléfono'}\n\n¡Falta 1 hora!`;
-        try {
-          await conn.sock.sendMessage(jid, { text: msg });
-          d.prepare('UPDATE appointments SET reminder_sent = 1 WHERE id = ?').run(appt.id);
-          console.log(`[reminder] Turno ${appt.id} recordado a ${biz.name}`);
-        } catch (e) { console.error('[reminder] Error negocio:', e.message); }
-      }
-
-      // Confirmación a clientes
+      // Confirmación a clientes y al negocio
       const confirmations = d.prepare(`
         SELECT a.*, c.name as customer_name, c.phone as customer_phone,
                s.name as service_name, e.name as employee_name
@@ -526,16 +500,26 @@ async function processReminders() {
       `).all(biz.id);
       for (const appt of confirmations) {
         const jid = getCustomerJid(appt.customer_phone, appt.customer_id);
-        if (!jid) { d.prepare('UPDATE appointments SET customer_confirmation_sent = 1 WHERE id = ?').run(appt.id); continue; }
-        const msg = `✅ ¡Hola ${appt.customer_name || ''}! Tu turno quedó confirmado:\n\n✂️ ${appt.service_name || 'Servicio'}\n🗓️ ${appt.date}\n🕐 ${appt.time}${appt.employee_name ? '\n💅 ' + appt.employee_name : ''}\n\nNos vemos en ${biz.name} 😊`;
-        try {
-          await conn.sock.sendMessage(jid, { text: msg });
-          d.prepare('UPDATE appointments SET customer_confirmation_sent = 1 WHERE id = ?').run(appt.id);
-          console.log(`[reminder] Confirmación turno ${appt.id} enviada a cliente`);
-        } catch (e) { console.error('[reminder] Error confirmación:', e.message); }
+        if (jid) {
+          const msg = `✅ ¡Hola ${appt.customer_name || ''}! Tu turno quedó confirmado:\n\n✂️ ${appt.service_name || 'Servicio'}\n🗓️ ${appt.date}\n🕐 ${appt.time}${appt.employee_name ? '\n💅 ' + appt.employee_name : ''}\n\nNos vemos en ${biz.name} 😊`;
+          try {
+            await conn.sock.sendMessage(jid, { text: msg });
+            console.log(`[reminder] Confirmación turno ${appt.id} enviada a cliente`);
+          } catch (e) { console.error('[reminder] Error confirmación cliente:', e.message); }
+        }
+        // Confirmación al negocio
+        const bizJid = biz.phone.includes('@') ? biz.phone : (biz.phone ? biz.phone + '@s.whatsapp.net' : null);
+        if (bizJid) {
+          const msgBiz = `✅ Nuevo turno agendado\n\n👤 ${appt.customer_name || 'Cliente'}\n✂️ ${appt.service_name || 'Servicio'}\n🗓️ ${appt.date}\n🕐 ${appt.time}${appt.employee_name ? '\n💅 ' + appt.employee_name : ''}\n📞 ${appt.customer_phone || 'sin teléfono'}`;
+          try {
+            await conn.sock.sendMessage(bizJid, { text: msgBiz });
+            console.log(`[reminder] Confirmación turno ${appt.id} enviada a negocio`);
+          } catch (e) { console.error('[reminder] Error confirmación negocio:', e.message); }
+        }
+        d.prepare('UPDATE appointments SET customer_confirmation_sent = 1 WHERE id = ?').run(appt.id);
       }
 
-      // Recordatorio 1 día antes al cliente
+      // Recordatorio 1 día antes al cliente y al negocio
       const reminders1d = d.prepare(`
         SELECT a.*, c.name as customer_name, c.phone as customer_phone,
                s.name as service_name, e.name as employee_name
@@ -549,16 +533,25 @@ async function processReminders() {
       `).all(biz.id);
       for (const appt of reminders1d) {
         const jid = getCustomerJid(appt.customer_phone, appt.customer_id);
-        if (!jid) { d.prepare('UPDATE appointments SET customer_reminder_1d_sent = 1 WHERE id = ?').run(appt.id); continue; }
-        const msg = `📅 Recordatorio de turno\n\nHola ${appt.customer_name || ''}, te recordamos tu turno de mañana:\n\n✂️ ${appt.service_name || 'Servicio'}\n🕐 ${appt.time}${appt.employee_name ? '\n💅 ' + appt.employee_name : ''}\n\nTe esperamos 😊`;
-        try {
-          await conn.sock.sendMessage(jid, { text: msg });
-          d.prepare('UPDATE appointments SET customer_reminder_1d_sent = 1 WHERE id = ?').run(appt.id);
-          console.log(`[reminder] 1 día turno ${appt.id} enviado a cliente`);
-        } catch (e) { console.error('[reminder] Error 1d:', e.message); }
+        if (jid) {
+          const msg = `📅 Recordatorio de turno\n\nHola ${appt.customer_name || ''}, te recordamos tu turno de mañana:\n\n✂️ ${appt.service_name || 'Servicio'}\n🕐 ${appt.time}${appt.employee_name ? '\n💅 ' + appt.employee_name : ''}\n\nTe esperamos 😊`;
+          try {
+            await conn.sock.sendMessage(jid, { text: msg });
+            console.log(`[reminder] 1 día turno ${appt.id} enviado a cliente`);
+          } catch (e) { console.error('[reminder] Error 1d cliente:', e.message); }
+        }
+        const bizJid = biz.phone.includes('@') ? biz.phone : (biz.phone ? biz.phone + '@s.whatsapp.net' : null);
+        if (bizJid) {
+          const msgBiz = `📅 Recordatorio de turno mañana\n\n👤 ${appt.customer_name || 'Cliente'}\n✂️ ${appt.service_name || 'Servicio'}\n🕐 ${appt.time}${appt.employee_name ? '\n💅 ' + appt.employee_name : ''}\n📞 ${appt.customer_phone || 'sin teléfono'}`;
+          try {
+            await conn.sock.sendMessage(bizJid, { text: msgBiz });
+            console.log(`[reminder] 1 día turno ${appt.id} enviado a negocio`);
+          } catch (e) { console.error('[reminder] Error 1d negocio:', e.message); }
+        }
+        d.prepare('UPDATE appointments SET customer_reminder_1d_sent = 1 WHERE id = ?').run(appt.id);
       }
 
-      // Recordatorio 1 hora antes al cliente
+      // Recordatorio 1 hora antes al cliente y al negocio
       const reminders1h = d.prepare(`
         SELECT a.*, c.name as customer_name, c.phone as customer_phone,
                s.name as service_name, e.name as employee_name
@@ -574,13 +567,22 @@ async function processReminders() {
       `).all(biz.id);
       for (const appt of reminders1h) {
         const jid = getCustomerJid(appt.customer_phone, appt.customer_id);
-        if (!jid) { d.prepare('UPDATE appointments SET customer_reminder_1h_sent = 1 WHERE id = ?').run(appt.id); continue; }
-        const msg = `🔔 ¡Falta 1 hora!\n\nHola ${appt.customer_name || ''}, tu turno es hoy a las ${appt.time}:\n\n✂️ ${appt.service_name || 'Servicio'}${appt.employee_name ? '\n💅 ' + appt.employee_name : ''}\n\nTe esperamos 🙌`;
-        try {
-          await conn.sock.sendMessage(jid, { text: msg });
-          d.prepare('UPDATE appointments SET customer_reminder_1h_sent = 1 WHERE id = ?').run(appt.id);
-          console.log(`[reminder] 1h turno ${appt.id} enviado a cliente`);
-        } catch (e) { console.error('[reminder] Error 1h:', e.message); }
+        if (jid) {
+          const msg = `🔔 ¡Falta 1 hora!\n\nHola ${appt.customer_name || ''}, tu turno es hoy a las ${appt.time}:\n\n✂️ ${appt.service_name || 'Servicio'}${appt.employee_name ? '\n💅 ' + appt.employee_name : ''}\n\nTe esperamos 🙌`;
+          try {
+            await conn.sock.sendMessage(jid, { text: msg });
+            console.log(`[reminder] 1h turno ${appt.id} enviado a cliente`);
+          } catch (e) { console.error('[reminder] Error 1h cliente:', e.message); }
+        }
+        const bizJid = biz.phone.includes('@') ? biz.phone : (biz.phone ? biz.phone + '@s.whatsapp.net' : null);
+        if (bizJid) {
+          const msgBiz = `🔔 ¡Falta 1 hora!\n\n👤 ${appt.customer_name || 'Cliente'}\n✂️ ${appt.service_name || 'Servicio'}\n🕐 ${appt.time}${appt.employee_name ? '\n💅 ' + appt.employee_name : ''}\n📞 ${appt.customer_phone || 'sin teléfono'}`;
+          try {
+            await conn.sock.sendMessage(bizJid, { text: msgBiz });
+            console.log(`[reminder] 1h turno ${appt.id} enviado a negocio`);
+          } catch (e) { console.error('[reminder] Error 1h negocio:', e.message); }
+        }
+        d.prepare('UPDATE appointments SET customer_reminder_1h_sent = 1, reminder_sent = 1 WHERE id = ?').run(appt.id);
       }
     }
     d.close();
