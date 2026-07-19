@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Panel Cliente - Impulso Digital</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<div id="toast-container" class="toast-container"></div>
+
+<!-- LOGIN -->
+<div id="login-view" class="login-container">
+  <div class="login-box">
+    <div class="login-logo">PC</div>
+    <h1>Panel Cliente</h1>
+    <p>Gestioná tus turnos y ventas</p>
+    <div id="login-error" class="login-error"></div>
+    <form id="login-form">
+      <div class="form-group">
+        <label>Email</label>
+        <input type="email" id="login-email" placeholder="tu@email.com" autocomplete="email" required>
+      </div>
+      <div class="form-group">
+        <label>Contraseña</label>
+        <input type="password" id="login-password" placeholder="Ingresa tu contraseña" autocomplete="current-password" required>
+      </div>
+      <button type="submit" class="btn btn-primary btn-lg btn-block">Iniciar Sesión</button>
+    </form>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app-view" class="app hidden">
+
+  <aside id="sidebar" class="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-logo">PC</div>
+      <div class="sidebar-brand">
+        <h2>Panel Cliente</h2>
+        <span id="sidebar-business-name">Mi Negocio</span>
+      </div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-item active" data-view="dashboard">
+        <span class="icon">&#9632;</span> Dashboard
+      </div>
+      <div class="nav-item" data-view="appointments">
+        <span class="icon">&#128197;</span> Turnos
+        <span id="appt-badge" class="badge" style="display:none"></span>
+      </div>
+      <div class="nav-item" data-view="customers">
+        <span class="icon">&#128101;</span> Clientes
+      </div>
+      <div class="nav-item" data-view="sales">
+        <span class="icon">&#128176;</span> Ventas
+      </div>
+      <div class="nav-item" data-view="whatsapp">
+        <span class="icon">&#128172;</span> WhatsApp
+        <span id="wa-badge" class="badge" style="display:none">IA</span>
+      </div>
+      <div class="nav-item" data-view="settings">
+        <span class="icon">&#9881;</span> Configuración
+      </div>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="sidebar-user">
+        <strong id="sidebar-name">Negocio</strong>
+        <span>Panel Cliente</span>
+      </div>
+      <button id="logout-btn" class="btn btn-sm btn-secondary" title="Cerrar sesión">Salir</button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="main-header">
+      <div>
+        <button id="mobile-toggle" class="mobile-toggle">&#9776;</button>
+        <h1 id="view-title">Dashboard</h1>
+        <p id="view-subtitle">Resumen de tu negocio</p>
+      </div>
+      <div id="header-actions"></div>
+    </header>
+    <div id="main-content" class="main-content"></div>
+  </main>
+</div>
+
+<!-- MODAL CUSTOMER -->
+<div id="modal-customer" class="modal-overlay">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 id="modal-customer-title">Nuevo Cliente</h2>
+      <button class="modal-close" onclick="closeModal('modal-customer')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <form id="form-customer">
+        <input type="hidden" id="customer-id">
+        <div class="form-group">
+          <label>Nombre *</label>
+          <input type="text" id="c-name" required>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Teléfono</label>
+            <input type="text" id="c-phone">
+          </div>
+          <div class="form-group">
+            <label>Email</label>
+            <input type="email" id="c-email">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Notas</label>
+          <textarea id="c-notes" rows="2" placeholder="Información relevante..."></textarea>
+        </div>
+      </form>
+      <div id="customer-history" style="display:none; margin-top:20px; padding-top:20px; border-top:1px solid var(--border);">
+        <h3 style="font-size:14px; font-weight:600; margin-bottom:12px;">Historial del Cliente</h3>
+        <div id="customer-appts" style="margin-bottom:16px;"></div>
+        <div id="customer-sales"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-customer')">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveCustomer()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL APPOINTMENT -->
+<div id="modal-appointment" class="modal-overlay">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 id="modal-appt-title">Nuevo Turno</h2>
+      <button class="modal-close" onclick="closeModal('modal-appointment')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <form id="form-appointment">
+        <input type="hidden" id="appt-id">
+        <div class="form-group">
+          <label>Cliente *</label>
+          <div class="quick-customer">
+            <select id="a-customer" style="flex:1;" required>
+              <option value="">Seleccionar cliente...</option>
+            </select>
+            <button type="button" class="btn btn-sm btn-secondary" onclick="quickAddCustomer()" title="Agregar cliente rápido">+</button>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Fecha *</label>
+            <input type="date" id="a-date" required>
+          </div>
+          <div class="form-group">
+            <label>Hora *</label>
+            <input type="time" id="a-time" required>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Servicio</label>
+            <select id="a-service"><option value="">Sin servicio</option></select>
+          </div>
+          <div class="form-group">
+            <label>Empleado</label>
+            <select id="a-employee"><option value="">Sin empleado</option></select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Estado</label>
+          <select id="a-status">
+            <option value="pending">Pendiente</option>
+            <option value="confirmed">Confirmado</option>
+            <option value="in_progress">En curso</option>
+            <option value="completed">Completado</option>
+            <option value="cancelled">Cancelado</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Notas</label>
+          <textarea id="a-notes" rows="2" placeholder="Notas del turno..."></textarea>
+        </div>
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-appointment')">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveAppointment()">Guardar Turno</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL SALE -->
+<div id="modal-sale" class="modal-overlay">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 id="modal-sale-title">Nueva Venta</h2>
+      <button class="modal-close" onclick="closeModal('modal-sale')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <form id="form-sale">
+        <div class="form-group">
+          <label>Cliente</label>
+          <select id="s-customer"><option value="">Sin cliente (venta directa)</option></select>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Servicio</label>
+            <select id="s-service"><option value="">Seleccionar servicio...</option></select>
+          </div>
+          <div class="form-group">
+            <label>Monto *</label>
+            <input type="number" id="s-amount" step="0.01" min="0" required>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Método de Pago</label>
+            <select id="s-payment">
+              <option value="cash">Efectivo</option>
+              <option value="transfer">Transferencia</option>
+              <option value="card">Tarjeta</option>
+              <option value="mercadopago">Mercado Pago</option>
+              <option value="other">Otro</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Fecha</label>
+            <input type="date" id="s-date">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Notas</label>
+          <textarea id="s-notes" rows="2" placeholder="Detalle de la venta..."></textarea>
+        </div>
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-sale')">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveSale()">Registrar Venta</button>
+    </div>
+  </div>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>
