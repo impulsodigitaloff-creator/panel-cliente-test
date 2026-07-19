@@ -145,6 +145,35 @@ if (businessCount.count === 0) {
   ins.run('Carolina Lobos Estilista', 'Carolina Lobos', 'caroweb@panel.cliente', hash('caro123'));
 }
 
+// Migración: cargar servicios iniciales para el primer negocio que no tenga
+try {
+  const firstBiz = db.prepare('SELECT id FROM businesses ORDER BY id LIMIT 1').get();
+  if (firstBiz) {
+    const svcCount = db.prepare('SELECT COUNT(*) as count FROM services WHERE business_id = ?').get(firstBiz.id);
+    if (svcCount.count === 0) {
+      const svcIns = db.prepare('INSERT INTO services (business_id, name, price, duration) VALUES (?, ?, ?, ?)');
+      const services = [
+        ['Brushing', 25000, 30],
+        ['Peinado semirecogido', 40000, 45],
+        ['Peinado recogido completo', 60000, 60],
+        ['Peinado novia/madrina/egresada', 70000, 90],
+        ['Trenzados laterales', 30000, 40],
+        ['Semitrenzado', 50000, 50],
+        ['Trenzado completo', 70000, 60],
+        ['Barrido de color', 25000, 60],
+        ['Decoloración global', 50000, 90],
+        ['Tratamiento caída de cabello', 35000, 45],
+        ['Lavado de cabello (con secado en máquina)', 15000, 20],
+        ['Aplicación de color/hena (con secado en máquina)', 20000, 30]
+      ];
+      for (const [name, price, duration] of services) {
+        svcIns.run(firstBiz.id, name, price, duration);
+      }
+      console.log(`[db] ${services.length} servicios cargados para negocio ${firstBiz.id}`);
+    }
+  }
+} catch (e) { console.log('[db] Migración servicios skip:', e.message); }
+
 module.exports = {
   // Auth
   createBusiness(data) {
