@@ -107,8 +107,10 @@ async function startConnection(businessId) {
   sock.ev.on('creds.update', saveCreds);
 
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    console.log(`[bot] messages.upsert: type=${type}, count=${messages.length}`);
     if (type !== 'notify') return;
     for (const msg of messages) {
+      console.log(`[bot] msg: fromMe=${msg.key.fromMe}, jid=${msg.key.remoteJid}`);
       if (msg.key.fromMe) continue;
       if (msg.key.remoteJid?.includes('@g.us')) continue;
       if (!msg.key.remoteJid?.includes('@s.whatsapp.net')) continue;
