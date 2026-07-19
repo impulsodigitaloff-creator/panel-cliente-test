@@ -387,6 +387,12 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// Error handler
+app.use((err, req, res, next) => {
+  console.error('[server error]', err.stack || err.message || err);
+  res.status(500).json({ error: 'Error interno del servidor' });
+});
+
 app.listen(PORT, () => {
   console.log(`\n  Panel Cliente - Impulso Digital`);
   console.log(`  → http://localhost:${PORT}\n`);
