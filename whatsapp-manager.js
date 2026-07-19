@@ -18,6 +18,17 @@ function getAuthPath(businessId) {
   return p;
 }
 
+function isBusinessOpen(date, time) {
+  const d = new Date(date + 'T' + time);
+  const day = d.getDay(); // 0=domingo, 1=lunes, ..., 6=sábado
+  if (day === 0) return false;
+  const [h, m] = time.split(':').map(Number);
+  const minutes = h * 60 + m;
+  const open = 9 * 60 + 30;  // 9:30
+  const close = 20 * 60;     // 20:00
+  return minutes >= open && minutes < close;
+}
+
 function buildSystemPrompt(businessId) {
   const services = db.getServices(businessId);
   const employees = db.getEmployees(businessId);
@@ -38,17 +49,6 @@ Info del negocio (usá esto si el cliente pregunta):
 - Horarios de atención: Lunes a Sábados 9:30-20:00, Domingos cerrado
 `;
   }
-
-function isBusinessOpen(date, time) {
-  const d = new Date(date + 'T' + time);
-  const day = d.getDay(); // 0=domingo, 1=lunes, ..., 6=sábado
-  if (day === 0) return false;
-  const [h, m] = time.split(':').map(Number);
-  const minutes = h * 60 + m;
-  const open = 9 * 60 + 30;  // 9:30
-  const close = 20 * 60;     // 20:00
-  return minutes >= open && minutes < close;
-}
 
   return `
 Sos la asistente virtual de "${bizName}", una peluquería/barbería/estética en San Juan. Respondé en español, tono cálido, profesional y amable. Usá emojis con moderación ✨.
