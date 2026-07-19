@@ -352,7 +352,7 @@ app.post('/api/whatsapp/conversations/:id/messages', requireAuth, async (req, re
   const { content } = req.body;
   if (!content) return res.status(400).json({ error: 'Contenido requerido' });
   db.insertWAMessage(conv.id, 'human', content);
-  const jid = conv.phone.includes('@') ? conv.phone : conv.phone + '@s.whatsapp.net';
+  const jid = conv.remote_jid || (conv.phone.includes('@') ? conv.phone : conv.phone + '@s.whatsapp.net');
   const conn = wa.getConnection(req.session.businessId);
   if (conn) {
     try {

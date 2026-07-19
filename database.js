@@ -143,6 +143,7 @@ try { db.exec('ALTER TABLE businesses ADD COLUMN hours TEXT DEFAULT \'\''); } ca
 try { db.exec('ALTER TABLE businesses ADD COLUMN instagram TEXT DEFAULT \'\''); } catch (e) {}
 try { db.exec('ALTER TABLE businesses ADD COLUMN human_phone TEXT DEFAULT \'\''); } catch (e) {}
 try { db.exec('ALTER TABLE appointments ADD COLUMN reminder_sent INTEGER DEFAULT 0'); } catch (e) {}
+try { db.exec('ALTER TABLE wa_conversations ADD COLUMN remote_jid TEXT DEFAULT \'\''); } catch (e) {}
 
 const businessCount = db.prepare('SELECT COUNT(*) as count FROM businesses').get();
 if (businessCount.count === 0) {
@@ -497,14 +498,20 @@ const dbMethods = {
     const msgs = db.prepare('SELECT * FROM wa_messages WHERE conversation_id = ? ORDER BY id DESC LIMIT ?').all(conversationId, limit);
     return msgs.reverse();
   },
-  getOrCreateWACoversation(businessId, phone, name) {
+  getOrCreateWACoversation(businessId, phone, name, remoteJid) {
     let c = db.prepare('SELECT * FROM wa_conversations WHERE business_id = ? AND phone = ?').get(businessId, phone);
     if (!c) {
-      const r = db.prepare('INSERT INTO wa_conversations (business_id, phone, name) VALUES (?, ?, ?)').run(businessId, phone, name || '');
+      const r = db.prepare('INSERT INTO wa_conversations (business_id, phone, name, remote_jid) VALUES (?, ?, ?, ?)').run(businessId, phone, name || '', remoteJid || '');
       c = db.prepare('SELECT * FROM wa_conversations WHERE id = ?').get(r.lastInsertRowid);
-    } else if (name && name !== c.name) {
-      db.prepare('UPDATE wa_conversations SET name=? WHERE id=?').run(name, c.id);
-      c.name = name;
+    } else {
+      if (name && name !== c.name) {
+        db.prepare('UPDATE wa_conversations SET name=? WHERE id=?').run(name, c.id);
+        c.name = name;
+      }
+      if (remoteJid && remoteJid !== c.remote_jid) {
+        db.prepare('UPDATE wa_conversations SET remote_jid=? WHERE id=?').run(remoteJid, c.id);
+        c.remote_jid = remoteJid;
+      }
     }
     return c;
   },

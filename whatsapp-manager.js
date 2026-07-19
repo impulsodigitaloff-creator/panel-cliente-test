@@ -263,7 +263,7 @@ async function startConnection(businessId) {
       const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
       if (!text) continue;
       const pushName = msg.pushName || '';
-      const conv = db.getOrCreateWACoversation(businessId, phone, pushName);
+      const conv = db.getOrCreateWACoversation(businessId, phone, pushName, msg.key.remoteJid);
       db.insertWAMessage(conv.id, 'user', text);
       console.log(`[bot] ← ${phone}: ${text.slice(0, 60)}`);
       if (conv.mode === 'HUMAN') continue;
@@ -379,7 +379,7 @@ async function startPairingConnection(businessId, phoneNumber) {
       const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
       if (!text) continue;
       const pushName = msg.pushName || '';
-      const conv = db.getOrCreateWACoversation(businessId, phone, pushName);
+      const conv = db.getOrCreateWACoversation(businessId, phone, pushName, msg.key.remoteJid);
       db.insertWAMessage(conv.id, 'user', text);
       console.log(`[bot] ← ${phone}: ${text.slice(0, 60)}`);
       if (conv.mode === 'HUMAN') continue;
@@ -430,7 +430,8 @@ async function processOutbox() {
     const conn = connections.get(item.business_id);
     if (!conn) continue;
     try {
-      const jid = item.phone.includes('@') ? item.phone : item.phone + '@s.whatsapp.net';
+      const conv = db.prepare('SELECT remote_jid FROM wa_conversations WHERE id = ?').get(item.conversation_id);
+      const jid = (conv && conv.remote_jid) || (item.phone.includes('@') ? item.phone : item.phone + '@s.whatsapp.net');
       await conn.sock.sendMessage(jid, { text: item.content });
       db.markWAOutboxSent(item.id);
     } catch (e) {
