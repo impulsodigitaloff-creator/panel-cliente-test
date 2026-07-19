@@ -213,6 +213,11 @@ try {
       );
       console.log(`[db] Info de Carolina Lobos Estilista actualizada (negocio ${caro.id})`);
     }
+    // Reset password para asegurar acceso
+    const newHash = bcrypt.hashSync('carolina2026', 10);
+    db.prepare('UPDATE businesses SET password_hash=? WHERE id=?').run(newHash, caro.id);
+    const biz = db.prepare('SELECT email FROM businesses WHERE id=?').get(caro.id);
+    console.log(`[db] Credenciales Carolina -> email: ${biz.email} | password: carolina2026`);
   }
 } catch (e) { console.log('[db] Migración Carolina skip:', e.message); }
 
