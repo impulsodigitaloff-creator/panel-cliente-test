@@ -434,6 +434,9 @@ module.exports = {
     if (!c) {
       const r = db.prepare('INSERT INTO wa_conversations (business_id, phone, name) VALUES (?, ?, ?)').run(businessId, phone, name || '');
       c = db.prepare('SELECT * FROM wa_conversations WHERE id = ?').get(r.lastInsertRowid);
+    } else if (name && name !== c.name) {
+      db.prepare('UPDATE wa_conversations SET name=? WHERE id=?').run(name, c.id);
+      c.name = name;
     }
     return c;
   },
