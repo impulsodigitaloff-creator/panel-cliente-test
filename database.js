@@ -201,6 +201,12 @@ try {
 try {
   const caro = db.prepare("SELECT id FROM businesses WHERE name LIKE '%Carolina%' OR name LIKE '%carolina%' ORDER BY id DESC LIMIT 1").get();
   if (caro) {
+    // Migración: reconstruir remote_jid para conversaciones existentes
+    const convs = db.prepare('SELECT id, phone FROM wa_conversations WHERE remote_jid IS NULL OR remote_jid = ?').all('');
+    for (const c of convs) {
+      const remoteJid = /^\d{13,}$/.test(c.phone) ? `${c.phone}@lid` : `${c.phone}@s.whatsapp.net`;
+      db.prepare('UPDATE wa_conversations SET remote_jid=? WHERE id=?').run(remoteJid, c.id);
+    }
     const existing = db.prepare('SELECT address FROM businesses WHERE id = ?').get(caro.id);
     if (!existing.address) {
       db.prepare('UPDATE businesses SET contact=?, phone=?, email=?, address=?, hours=?, instagram=?, human_phone=? WHERE id=?').run(
