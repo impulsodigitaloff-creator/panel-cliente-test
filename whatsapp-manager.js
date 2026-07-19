@@ -110,7 +110,8 @@ async function startConnection(businessId) {
     console.log(`[bot] messages.upsert: type=${type}, count=${messages.length}`);
     if (type !== 'notify') return;
     for (const msg of messages) {
-      console.log(`[bot] msg: fromMe=${msg.key.fromMe}, jid=${msg.key.remoteJid}`);
+      console.log(`[bot] msg: fromMe=${msg.key.fromMe}, jid=${msg.key.remoteJid}, msgType=${msg.message ? Object.keys(msg.message).join(',') : 'EMPTY'}`);
+      console.log(`[bot] msg raw: ${JSON.stringify(msg.message).slice(0,300)}`);
       if (msg.key.fromMe) continue;
       if (msg.key.remoteJid?.includes('@g.us')) continue;
       if (!msg.key.remoteJid?.includes('@s.whatsapp.net')) continue;
