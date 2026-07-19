@@ -191,7 +191,7 @@ async function startPairingConnection(businessId, phoneNumber) {
         console.log(`[bot] Negocio ${businessId} deslogueado por pairing`);
       } else {
         db.upsertWhatsAppConnection({ business_id: businessId, status: 'connecting' });
-        conn.reconnectTimer = setTimeout(() => startConnection(businessId), code === 440 ? 15000 : 5000);
+        conn.reconnectTimer = setTimeout(() => startPairingConnection(businessId), code === 440 ? 15000 : 5000);
         connections.set(businessId, conn);
       }
     }

@@ -236,7 +236,7 @@ function renderCustomersTable(el) {
   let data = state.customers;
   if (customerSearch) {
     const s = customerSearch.toLowerCase();
-    data = data.filter(c => c.name.toLowerCase().includes(s) || c.phone.includes(s));
+    data = data.filter(c => c.name.toLowerCase().includes(s) || (c.phone || '').includes(s));
   }
 
   const rows = data.map(c => `
@@ -1104,7 +1104,13 @@ async function deleteService(id) {
 
 // ==================== INIT ====================
 
-document.addEventListener('DOMContentLoaded', checkSession);
+document.addEventListener('DOMContentLoaded', () => {
+  checkSession();
+  ['form-customer', 'form-appointment', 'form-sale'].forEach(id => {
+    const f = document.getElementById(id);
+    if (f) f.addEventListener('submit', e => e.preventDefault());
+  });
+});
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
