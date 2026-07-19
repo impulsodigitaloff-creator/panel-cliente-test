@@ -65,7 +65,7 @@ ${empList}
 `.trim();
 }
 
-async function callLLM(history, businessId) {
+async function callLLM(history, businessId, phone, pushName) {
   if (!GROQ_API_KEY) return '⚠️ WhatsApp sin configurar. Contactá al administrador.';
   try {
     const messages = [
@@ -74,6 +74,25 @@ async function callLLM(history, businessId) {
         role: m.role === 'user' ? 'user' : 'assistant',
         content: m.content
       }))
+    ];
+    const tools = [
+      {
+        type: 'function',
+        function: {
+          name: 'crear_turno',
+          description: 'Crear un turno en el sistema. Llamar esta función SOLO cuando tengas nombre del cliente, fecha y hora confirmados.',
+          parameters: {
+            type: 'object',
+            properties: {
+              nombre: { type: 'string', description: 'Nombre del cliente' },
+              fecha: { type: 'string', description: 'Fecha en formato YYYY-MM-DD' },
+              hora: { type: 'string', description: 'Hora en formato HH:MM (24hs)' },
+              servicio: { type: 'string', description: 'Nombre del servicio solicitado' }
+            },
+            required: ['nombre', 'fecha', 'hora', 'servicio']
+          }
+        }
+      }
     ];
     const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
@@ -84,8 +103,10 @@ async function callLLM(history, businessId) {
       body: JSON.stringify({
         model: GROQ_MODEL,
         messages,
+        tools,
+        tool_choice: 'auto',
         temperature: 0.7,
-        max_tokens: 300
+        max_tokens: 400
       })
     });
     if (!res.ok) {
@@ -93,10 +114,76 @@ async function callLLM(history, businessId) {
       throw new Error(`Groq ${res.status}: ${errText.slice(0, 200)}`);
     }
     const data = await res.json();
-    return data.choices[0].message.content.trim();
+    const choice = data.choices[0];
+    // Si la IA llamó una función, ejecutarla
+    if (choice.message.tool_calls && choice.message.tool_calls.length > 0) {
+      for (const tc of choice.message.tool_calls) {
+        if (tc.function.name === 'crear_turno') {
+          const args = JSON.parse(tc.function.arguments);
+          const result = createAppointmentFromAI(businessId, args, phone, pushName);
+          // Mandar una segunda llamada para que la IA confirme
+          messages.push(choice.message);
+          messages.push({
+            role: 'tool',
+            tool_call_id: tc.id,
+            content: JSON.stringify(result)
+          });
+          const res2 = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${GROQ_API_KEY}`
+            },
+            body: JSON.stringify({
+              model: GROQ_MODEL,
+              messages,
+              temperature: 0.7,
+              max_tokens: 300
+            })
+          });
+          if (res2.ok) {
+            const data2 = await res2.json();
+            return data2.choices[0].message.content.trim();
+          }
+          return '✅ Turno agendado. Te esperamos!';
+        }
+      }
+    }
+    return choice.message.content.trim();
   } catch (err) {
     console.error('[bot] LLM error:', err.message);
     return 'Ocurrió un error. Déjame derivarte con un asesor humano.';
+  }
+}
+
+function createAppointmentFromAI(businessId, args, phone, pushName) {
+  try {
+    // Buscar o crear cliente por phone
+    let customer = db.prepare('SELECT id FROM customers WHERE business_id = ? AND phone = ?').get(businessId, phone);
+    if (!customer) {
+      const r = db.prepare('INSERT INTO customers (business_id, name, phone) VALUES (?, ?, ?)').run(businessId, args.nombre || pushName || phone, phone);
+      customer = { id: r.lastInsertRowid };
+    }
+    // Buscar servicio por nombre (match parcial)
+    let service = db.prepare('SELECT id FROM services WHERE business_id = ? AND name LIKE ?').get(businessId, '%' + args.servicio + '%');
+    if (!service) {
+      service = db.prepare('SELECT id FROM services WHERE business_id = ? AND name LIKE ?').get(businessId, '%' + args.servicio.slice(0, 5) + '%');
+    }
+    // Crear el turno
+    db.prepare('INSERT INTO appointments (business_id, customer_id, date, time, status, notes, service_id) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+      businessId,
+      customer.id,
+      args.fecha,
+      args.hora,
+      'confirmed',
+      'Agendado por IA WhatsApp',
+      service ? service.id : null
+    );
+    console.log(`[bot] Turno creado: ${args.nombre} - ${args.servicio} - ${args.fecha} ${args.hora}`);
+    return { success: true, message: 'Turno creado exitosamente', nombre: args.nombre, fecha: args.fecha, hora: args.hora, servicio: args.servicio };
+  } catch (e) {
+    console.error('[bot] Error creando turno:', e.message);
+    return { success: false, message: e.message };
   }
 }
 
@@ -178,7 +265,7 @@ async function startConnection(businessId) {
       console.log(`[bot] ← ${phone}: ${text.slice(0, 60)}`);
       if (conv.mode === 'HUMAN') continue;
       const history = db.getRecentWAHistory(conv.id, 20);
-      const reply = await callLLM(history, businessId);
+      const reply = await callLLM(history, businessId, phone, pushName);
       db.insertWAMessage(conv.id, 'assistant', reply);
       try {
         await sock.sendMessage(msg.key.remoteJid, { text: reply });
@@ -279,7 +366,7 @@ async function startPairingConnection(businessId, phoneNumber) {
       console.log(`[bot] ← ${phone}: ${text.slice(0, 60)}`);
       if (conv.mode === 'HUMAN') continue;
       const history = db.getRecentWAHistory(conv.id, 20);
-      const reply = await callLLM(history, businessId);
+      const reply = await callLLM(history, businessId, phone, pushName);
       db.insertWAMessage(conv.id, 'assistant', reply);
       try {
         await sock.sendMessage(msg.key.remoteJid, { text: reply });

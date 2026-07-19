@@ -754,6 +754,25 @@ async function pollWA(el) {
     } else if (!hasChat) {
       renderWADisconnected(el, status);
     }
+    // Actualizar lista de conversaciones si estamos conectados
+    if (status.status === 'connected') {
+      const convList = document.getElementById('wa-conv-items');
+      if (convList) {
+        const convs = await api('/api/whatsapp/conversations');
+        convList.innerHTML = convs.length === 0 ? '<div style="padding:20px;text-align:center;font-size:13px;color:var(--text-muted);">Sin conversaciones aún</div>' :
+          convs.map(c => `
+            <div class="wa-conv-item ${waSelectedConv == c.id ? 'active' : ''}" data-conv-id="${c.id}" onclick="selectWAConv(${c.id})">
+              <div style="display:flex;justify-content:space-between;align-items:start;">
+                <strong style="font-size:13px;">${c.name || c.phone}</strong>
+                <span style="font-size:10px;color:var(--text-muted);">${c.mode === 'AI' ? '🤖' : '👤'}</span>
+              </div>
+              <div style="font-size:11px;color:var(--text-muted);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                ${c.last_message ? c.last_message.slice(0, 40) : 'Sin mensajes'}
+              </div>
+            </div>
+          `).join('');
+      }
+    }
     if (waSelectedConv) {
       const conv = await api(`/api/whatsapp/conversations/${waSelectedConv}`);
       const msgsDiv = document.getElementById('wa-messages');
@@ -931,8 +950,12 @@ async function selectWAConv(id) {
   document.querySelectorAll('.wa-conv-item').forEach(el => el.classList.toggle('active', el.dataset.convId == id));
   const chatArea = document.getElementById('wa-chat-area');
   if (chatArea) chatArea.innerHTML = '<div class="spinner"></div>';
-  const conv = await api(`/api/whatsapp/conversations/${id}`);
-  renderWAChatDetail(conv);
+  try {
+    const conv = await api(`/api/whatsapp/conversations/${id}`);
+    renderWAChatDetail(conv);
+  } catch (err) {
+    if (chatArea) chatArea.innerHTML = '<div style="flex:1;display:flex;align-items:center;justify-content:center;color:var(--text-muted);">Error al cargar. Click en otra conversación.</div>';
+  }
 }
 
 function renderWAChatDetail(conv) {
