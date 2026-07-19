@@ -9,7 +9,7 @@ const AUTH_DIR = process.env.AUTH_DIR || path.join(__dirname, 'data', 'auth');
 if (!fs.existsSync(AUTH_DIR)) fs.mkdirSync(AUTH_DIR, { recursive: true });
 
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY || '');
-const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+const MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
 
 const connections = new Map();
 
@@ -25,10 +25,15 @@ function buildSystemPrompt(businessId) {
   let srvList = services.map(s => `  - ${s.name}: $${s.price} (${s.duration} min)`).join('\n') || '  (sin servicios cargados)';
   let empList = employees.map(e => `  - ${e.name}${e.phone ? ' ('+e.phone+')' : ''}`).join('\n') || '  (sin empleados cargados)';
   return `
-Eres un asistente virtual de un negocio. Respondes en español, mensajes breves de 2 a 4 líneas. Sin emojis.
-Si el cliente quiere sacar un turno, pedile: nombre, fecha (YYYY-MM-DD), hora (HH:MM), servicio y empleado (opcional).
-Si no tenés la info necesaria, pedila. No inventes datos.
-Si no podés resolver, decí: "Déjame derivarte con un asesor humano."
+Sos la asistente virtual de este negocio. Respondé en español con un tono cálido, profesional y amable. Usá emojis con moderación ✨.
+
+Reglas:
+- Mensajes breves, de 2 a 4 líneas.
+- Al inicio de la conversación saludá cordialmente: "¡Hola! Bienvenido/a 😊 ¿En qué puedo ayudarte?"
+- Si quiere sacar un turno, pedí: nombre, fecha (DD/MM), hora y servicio deseado.
+- Si te falta información, preguntá amablemente.
+- Si no podés resolver, decí: "Perdón, déjame derivarte con un asesor 🙏"
+- Nunca inventes datos. Sé honesta.
 
 Servicios del negocio:
 ${srvList}

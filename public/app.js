@@ -836,7 +836,7 @@ async function renderWAConnected(el) {
         <div id="wa-conv-items" style="flex:1;overflow-y:auto;">
           ${convs.length === 0 ? '<div style="padding:20px;text-align:center;font-size:13px;color:var(--text-muted);">Sin conversaciones aún</div>' :
             convs.map(c => `
-              <div class="wa-conv-item ${activeConv && activeConv.id == c.id ? 'active' : ''}" onclick="selectWAConv(${c.id})">
+              <div class="wa-conv-item ${activeConv && activeConv.id == c.id ? 'active' : ''}" data-conv-id="${c.id}" onclick="selectWAConv(${c.id})">
                 <div style="display:flex;justify-content:space-between;align-items:start;">
                   <strong style="font-size:13px;">${c.name || c.phone}</strong>
                   <span style="font-size:10px;color:var(--text-muted);">${c.mode === 'AI' ? '🤖' : '👤'}</span>
@@ -928,18 +928,47 @@ async function disconnectWA() {
 
 async function selectWAConv(id) {
   waSelectedConv = id;
+  document.querySelectorAll('.wa-conv-item').forEach(el => el.classList.toggle('active', el.dataset.convId == id));
+  const chatArea = document.getElementById('wa-chat-area');
+  if (chatArea) chatArea.innerHTML = '<div class="spinner"></div>';
   const conv = await api(`/api/whatsapp/conversations/${id}`);
-  await renderWAConnected(document.getElementById('main-content'));
-  const msgsDiv = document.getElementById('wa-messages');
-  if (msgsDiv && conv.messages) {
-    msgsDiv.innerHTML = conv.messages.map(m => `
-      <div class="wa-msg wa-msg-${m.role}">
-        <div class="wa-msg-text">${m.content}</div>
-        <div class="wa-msg-time">${new Date(m.created_at).toLocaleTimeString('es-AR', {hour:'2-digit',minute:'2-digit'})}</div>
+  renderWAChatDetail(conv);
+}
+
+function renderWAChatDetail(conv) {
+  const chatArea = document.getElementById('wa-chat-area');
+  if (!chatArea) return;
+  chatArea.innerHTML = `
+    <div style="padding:14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
+      <div>
+        <strong style="font-size:14px;">${conv.name || conv.phone}</strong>
+        <span style="font-size:11px;color:var(--text-muted);margin-left:8px;">${conv.phone}</span>
       </div>
-    `).join('');
-    msgsDiv.scrollTop = msgsDiv.scrollHeight;
-  }
+      <div style="display:flex;gap:6px;align-items:center;">
+        <span id="wa-mode-label" style="font-size:11px;padding:3px 8px;border-radius:6px;font-weight:500;background:${conv.mode === 'AI' ? 'rgba(48,209,88,0.15)' : 'rgba(255,214,10,0.15)'};color:${conv.mode === 'AI' ? '#30d158' : '#ffd60a'};">
+          ${conv.mode === 'AI' ? '🤖 IA' : '👤 Humano'}
+        </span>
+        <button class="btn btn-sm ${conv.mode === 'AI' ? 'btn-secondary' : 'btn-primary'}" onclick="toggleWAMode(${conv.id})" style="font-size:11px;">
+          Cambiar a ${conv.mode === 'AI' ? 'Humano' : 'IA'}
+        </button>
+        <button class="btn btn-sm btn-danger" onclick="deleteWAConv(${conv.id})" style="font-size:11px;">🗑️</button>
+      </div>
+    </div>
+    <div id="wa-messages" style="flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:8px;">
+      ${conv.messages ? conv.messages.map(m => `
+        <div class="wa-msg wa-msg-${m.role}">
+          <div class="wa-msg-text">${m.content}</div>
+          <div class="wa-msg-time">${new Date(m.created_at).toLocaleTimeString('es-AR', {hour:'2-digit',minute:'2-digit'})}</div>
+        </div>
+      `).join('') : ''}
+    </div>
+    <div style="padding:12px 14px;border-top:1px solid var(--border);display:flex;gap:8px;">
+      <input type="text" id="wa-msg-input" placeholder="${conv.mode === 'AI' ? '🤖 El bot responde automáticamente' : 'Escribí un mensaje...'}" style="flex:1;padding:10px 14px;background:var(--bg-input);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-size:13px;outline:none;" ${conv.mode === 'AI' ? 'disabled' : ''}>
+      <button class="btn btn-primary" id="wa-send-btn" onclick="sendWAMessage(${conv.id})" ${conv.mode === 'AI' ? 'disabled' : ''}>Enviar</button>
+    </div>
+  `;
+  const msgsDiv = document.getElementById('wa-messages');
+  if (msgsDiv) msgsDiv.scrollTop = msgsDiv.scrollHeight;
 }
 
 async function toggleWAMode(id) {
@@ -948,7 +977,8 @@ async function toggleWAMode(id) {
   try {
     await api(`/api/whatsapp/conversations/${id}/mode`, { method: 'POST', body: JSON.stringify({ mode: newMode }) });
     waSelectedConv = id;
-    renderWhatsApp();
+    const updated = await api(`/api/whatsapp/conversations/${id}`);
+    renderWAChatDetail(updated);
   } catch (err) { toast(err.message, 'error'); }
 }
 
@@ -956,22 +986,16 @@ async function sendWAMessage(id) {
   const input = document.getElementById('wa-msg-input');
   const content = input.value.trim();
   if (!content) return;
+  input.value = '';
+  input.disabled = true;
   try {
     await api(`/api/whatsapp/conversations/${id}/messages`, { method: 'POST', body: JSON.stringify({ content }) });
-    input.value = '';
     waSelectedConv = id;
     const conv = await api(`/api/whatsapp/conversations/${id}`);
-    const msgsDiv = document.getElementById('wa-messages');
-    if (msgsDiv) {
-      msgsDiv.innerHTML = conv.messages.map(m => `
-        <div class="wa-msg wa-msg-${m.role}">
-          <div class="wa-msg-text">${m.content}</div>
-          <div class="wa-msg-time">${new Date(m.created_at).toLocaleTimeString('es-AR', {hour:'2-digit',minute:'2-digit'})}</div>
-        </div>
-      `).join('');
-      msgsDiv.scrollTop = msgsDiv.scrollHeight;
-    }
+    renderWAChatDetail(conv);
   } catch (err) { toast(err.message, 'error'); }
+  input.disabled = false;
+  input.focus();
 }
 
 async function deleteWAConv(id) {
