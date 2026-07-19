@@ -56,6 +56,9 @@ Reglas CRÍTICAS:
 - Mensajes breves, 2 a 4 líneas.
 - Al iniciar la conversación: "¡Hola! Bienvenido/a 😊 ¿En qué puedo ayudarte hoy?"
 - Si no podés resolver algo: "Perdón, déjame derivarte con un asesor 🙏"
+- REGLA DE AGENDADO: cuando ya tengas el nombre, fecha y hora del cliente, agregá al final de tu mensaje EXACTAMENTE esta línea (sin decirle al cliente que lo estás agregando):\n[AGENDAR nombre=NOMBRE fecha=YYYY-MM-DD hora=HH:MM servicio=SERVICIO]
+
+Ejemplo: si el cliente es Augusto, pide corte para mañana 20/07 a las 11:30, tu mensaje termina con:\n[AGENDAR nombre=Augusto fecha=2026-07-20 hora=11:30 servicio=Corte]
 
 Servicios que ofrecemos (para recomendar si el cliente no sabe qué elegir):
 ${srvList}
@@ -265,7 +268,22 @@ async function startConnection(businessId) {
       console.log(`[bot] ← ${phone}: ${text.slice(0, 60)}`);
       if (conv.mode === 'HUMAN') continue;
       const history = db.getRecentWAHistory(conv.id, 20);
-      const reply = await callLLM(history, businessId, phone, pushName);
+      let reply = await callLLM(history, businessId, phone, pushName);
+
+      // Detectar y ejecutar agendado
+      const agendaMatch = reply.match(/\[AGENDAR\s+([^\]]+)\]/);
+      if (agendaMatch) {
+        const args = Object.fromEntries(agendaMatch[1].trim().split(/\s+/).map(p => p.split('=')));
+        if (args.nombre && args.fecha && args.hora && args.servicio) {
+          const result = createAppointmentFromAI(businessId, args, phone, pushName);
+          if (result.success) {
+            reply = reply.replace(agendaMatch[0], '').trim();
+          } else {
+            reply = reply.replace(agendaMatch[0], '').trim() + ' (Perdón, hubo un error al guardar el turno. Te llamamos para confirmar 🙏)';
+          }
+        }
+      }
+
       db.insertWAMessage(conv.id, 'assistant', reply);
       try {
         await sock.sendMessage(msg.key.remoteJid, { text: reply });
@@ -366,7 +384,22 @@ async function startPairingConnection(businessId, phoneNumber) {
       console.log(`[bot] ← ${phone}: ${text.slice(0, 60)}`);
       if (conv.mode === 'HUMAN') continue;
       const history = db.getRecentWAHistory(conv.id, 20);
-      const reply = await callLLM(history, businessId, phone, pushName);
+      let reply = await callLLM(history, businessId, phone, pushName);
+
+      // Detectar y ejecutar agendado
+      const agendaMatch = reply.match(/\[AGENDAR\s+([^\]]+)\]/);
+      if (agendaMatch) {
+        const args = Object.fromEntries(agendaMatch[1].trim().split(/\s+/).map(p => p.split('=')));
+        if (args.nombre && args.fecha && args.hora && args.servicio) {
+          const result = createAppointmentFromAI(businessId, args, phone, pushName);
+          if (result.success) {
+            reply = reply.replace(agendaMatch[0], '').trim();
+          } else {
+            reply = reply.replace(agendaMatch[0], '').trim() + ' (Perdón, hubo un error al guardar el turno. Te llamamos para confirmar 🙏)';
+          }
+        }
+      }
+
       db.insertWAMessage(conv.id, 'assistant', reply);
       try {
         await sock.sendMessage(msg.key.remoteJid, { text: reply });
