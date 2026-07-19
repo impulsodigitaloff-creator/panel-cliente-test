@@ -114,6 +114,13 @@ async function startConnection(businessId) {
       const phone = sock.user?.id?.split(':')[0] || '';
       db.upsertWhatsAppConnection({ business_id: businessId, status: 'connected', qr_string: '', phone });
       console.log(`[bot] Negocio ${businessId} conectado: ${phone}`);
+      try {
+        const biz = db.getBusinessById(businessId);
+        if (biz && biz.name) {
+          await sock.updateProfileName(biz.name);
+          console.log(`[bot] Perfil actualizado: ${biz.name}`);
+        }
+      } catch (e) { console.log('[bot] No se pudo actualizar perfil:', e.message); }
     }
     if (connection === 'close') {
       const code = lastDisconnect?.error?.output?.statusCode;
@@ -211,6 +218,13 @@ async function startPairingConnection(businessId, phoneNumber) {
       const phone = sock.user?.id?.split(':')[0] || '';
       db.upsertWhatsAppConnection({ business_id: businessId, status: 'connected', qr_string: '', phone });
       console.log(`[bot] Negocio ${businessId} conectado vía pairing: ${phone}`);
+      try {
+        const biz = db.getBusinessById(businessId);
+        if (biz && biz.name) {
+          await sock.updateProfileName(biz.name);
+          console.log(`[bot] Perfil actualizado: ${biz.name}`);
+        }
+      } catch (e) { console.log('[bot] No se pudo actualizar perfil:', e.message); }
     }
     if (connection === 'close') {
       const code = lastDisconnect?.error?.output?.statusCode;
