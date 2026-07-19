@@ -114,12 +114,17 @@ async function startConnection(businessId) {
       console.log(`[bot] msg raw: ${JSON.stringify(msg.message).slice(0,300)}`);
       if (msg.key.fromMe) continue;
       if (msg.key.remoteJid?.includes('@g.us')) continue;
-      if (!msg.key.remoteJid?.includes('@s.whatsapp.net')) continue;
-      const phone = msg.key.remoteJid.replace('@s.whatsapp.net', '');
+      const isWA = msg.key.remoteJid?.includes('@s.whatsapp.net') || msg.key.remoteJid?.includes('@lid');
+      if (!isWA) continue;
+      const phone = msg.key.remoteJid.split('@')[0];
       const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
       if (!text) continue;
       const pushName = msg.pushName || '';
       const conv = db.getOrCreateWACoversation(businessId, phone, pushName);
+      if (msg.key.remoteJid !== phone + '@s.whatsapp.net' && msg.key.remoteJid !== conv.phone) {
+        db.prepare('UPDATE wa_conversations SET phone=? WHERE id=?').run(msg.key.remoteJid, conv.id);
+        conv.phone = msg.key.remoteJid;
+      }
       db.insertWAMessage(conv.id, 'user', text);
       console.log(`[bot] ← ${phone}: ${text.slice(0, 60)}`);
       if (conv.mode === 'HUMAN') continue;
@@ -207,12 +212,17 @@ async function startPairingConnection(businessId, phoneNumber) {
     for (const msg of messages) {
       if (msg.key.fromMe) continue;
       if (msg.key.remoteJid?.includes('@g.us')) continue;
-      if (!msg.key.remoteJid?.includes('@s.whatsapp.net')) continue;
-      const phone = msg.key.remoteJid.replace('@s.whatsapp.net', '');
+      const isWA = msg.key.remoteJid?.includes('@s.whatsapp.net') || msg.key.remoteJid?.includes('@lid');
+      if (!isWA) continue;
+      const phone = msg.key.remoteJid.split('@')[0];
       const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
       if (!text) continue;
       const pushName = msg.pushName || '';
       const conv = db.getOrCreateWACoversation(businessId, phone, pushName);
+      if (msg.key.remoteJid !== phone + '@s.whatsapp.net' && msg.key.remoteJid !== conv.phone) {
+        db.prepare('UPDATE wa_conversations SET phone=? WHERE id=?').run(msg.key.remoteJid, conv.id);
+        conv.phone = msg.key.remoteJid;
+      }
       db.insertWAMessage(conv.id, 'user', text);
       console.log(`[bot] ← ${phone}: ${text.slice(0, 60)}`);
       if (conv.mode === 'HUMAN') continue;
