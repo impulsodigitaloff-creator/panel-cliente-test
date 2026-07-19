@@ -56,7 +56,8 @@ Reglas CRÍTICAS:
 - Mensajes breves, 2 a 4 líneas.
 - Al iniciar la conversación: "¡Hola! Bienvenido/a 😊 ¿En qué puedo ayudarte hoy?"
 - Si no podés resolver algo: "Perdón, déjame derivarte con un asesor 🙏"
-- REGLA DE AGENDADO: cuando ya tengas el nombre, fecha y hora del cliente, agregá al final de tu mensaje EXACTAMENTE esta línea (sin decirle al cliente que lo estás agregando):\n[AGENDAR nombre=NOMBRE fecha=YYYY-MM-DD hora=HH:MM servicio=SERVICIO]
+- Regla de horarios: atendemos Lunes a Sábados de 9:30 a 20:00. Domingos CERRADO. Si el cliente pide un horario fuera de esos horarios (ej: a las 21:00 o domingo), decile amablemente que no abrimos a esa hora y ofrecéle un horario dentro de 9:30-20:00 de lunes a sábado.
+- REGLA DE AGENDADO: cuando ya tengas el nombre, fecha y hora del cliente dentro del horario de atención, agregá al final de tu mensaje EXACTAMENTE esta línea (sin decirle al cliente que lo estás agregando):\n[AGENDAR nombre=NOMBRE fecha=YYYY-MM-DD hora=HH:MM servicio=SERVICIO]
 
 Ejemplo: si el cliente es Augusto, pide corte para mañana 20/07 a las 11:30, tu mensaje termina con:\n[AGENDAR nombre=Augusto fecha=2026-07-20 hora=11:30 servicio=Corte]
 
@@ -448,14 +449,30 @@ function getConnection(businessId) {
 setInterval(processOutbox, 2000);
 
 // Reminder processor every 60s - manda recordatorio al negocio 1h antes del turno
+function getCustomerJid(customerPhone, customerId) {
+  // Si el cliente tiene una conversación de WA, usar ese remote_jid
+  if (customerId) {
+    const conv = db.prepare('SELECT remote_jid FROM wa_conversations WHERE phone = ? ORDER BY id DESC LIMIT 1').get(customerPhone);
+    if (conv && conv.remote_jid) return conv.remote_jid;
+  }
+  if (!customerPhone) return null;
+  const clean = customerPhone.replace(/[^0-9]/g, '');
+  if (!clean) return null;
+  if (/^\d{13,}$/.test(clean)) return `${clean}@lid`;
+  return `${clean}@s.whatsapp.net`;
+}
+
 async function processReminders() {
   try {
-    const bizList = db.prepare ? null : null;
     const Database = require('better-sqlite3');
     const path = require('path');
     const d = new Database(process.env.DB_PATH || path.join(__dirname, 'data', 'panelcliente.db'));
     const businesses = d.prepare('SELECT id, name, phone FROM businesses WHERE active = 1').all();
     for (const biz of businesses) {
+      const conn = connections.get(biz.id);
+      if (!conn) continue;
+
+      // Recordatorio 1h al negocio
       const upcoming = d.prepare(`
         SELECT a.*, c.name as customer_name, c.phone as customer_phone,
                s.name as service_name, e.name as employee_name
@@ -469,21 +486,85 @@ async function processReminders() {
           AND a.status IN ('pending','confirmed') AND a.reminder_sent = 0
         ORDER BY a.time
       `).all(biz.id);
-      if (upcoming.length === 0) continue;
-      const conn = connections.get(biz.id);
-      if (!conn) continue;
-      const bizPhone = biz.phone || '';
-      const jid = bizPhone.includes('@') ? bizPhone : (bizPhone ? bizPhone + '@s.whatsapp.net' : null);
-      if (!jid) continue;
       for (const appt of upcoming) {
+        const bizPhone = biz.phone || '';
+        const jid = bizPhone.includes('@') ? bizPhone : (bizPhone ? bizPhone + '@s.whatsapp.net' : null);
+        if (!jid) continue;
         const msg = `🔔 Recordatorio de turno\n\n👤 ${appt.customer_name || 'Cliente'}\n✂️ ${appt.service_name || 'Servicio'}\n🕐 ${appt.time}${appt.employee_name ? '\n💅 ' + appt.employee_name : ''}\n📞 ${appt.customer_phone || 'sin teléfono'}\n\n¡Falta 1 hora!`;
         try {
           await conn.sock.sendMessage(jid, { text: msg });
           d.prepare('UPDATE appointments SET reminder_sent = 1 WHERE id = ?').run(appt.id);
           console.log(`[reminder] Turno ${appt.id} recordado a ${biz.name}`);
-        } catch (e) {
-          console.error('[reminder] Error:', e.message);
-        }
+        } catch (e) { console.error('[reminder] Error negocio:', e.message); }
+      }
+
+      // Confirmación a clientes
+      const confirmations = d.prepare(`
+        SELECT a.*, c.name as customer_name, c.phone as customer_phone,
+               s.name as service_name, e.name as employee_name
+        FROM appointments a
+        LEFT JOIN customers c ON a.customer_id = c.id
+        LEFT JOIN services s ON a.service_id = s.id
+        LEFT JOIN employees e ON a.employee_id = e.id
+        WHERE a.business_id = ? AND a.status IN ('pending','confirmed') AND a.customer_confirmation_sent = 0
+      `).all(biz.id);
+      for (const appt of confirmations) {
+        const jid = getCustomerJid(appt.customer_phone, appt.customer_id);
+        if (!jid) { d.prepare('UPDATE appointments SET customer_confirmation_sent = 1 WHERE id = ?').run(appt.id); continue; }
+        const msg = `✅ ¡Hola ${appt.customer_name || ''}! Tu turno quedó confirmado:\n\n✂️ ${appt.service_name || 'Servicio'}\n🗓️ ${appt.date}\n🕐 ${appt.time}${appt.employee_name ? '\n💅 ' + appt.employee_name : ''}\n\nNos vemos en ${biz.name} 😊`;
+        try {
+          await conn.sock.sendMessage(jid, { text: msg });
+          d.prepare('UPDATE appointments SET customer_confirmation_sent = 1 WHERE id = ?').run(appt.id);
+          console.log(`[reminder] Confirmación turno ${appt.id} enviada a cliente`);
+        } catch (e) { console.error('[reminder] Error confirmación:', e.message); }
+      }
+
+      // Recordatorio 1 día antes al cliente
+      const reminders1d = d.prepare(`
+        SELECT a.*, c.name as customer_name, c.phone as customer_phone,
+               s.name as service_name, e.name as employee_name
+        FROM appointments a
+        LEFT JOIN customers c ON a.customer_id = c.id
+        LEFT JOIN services s ON a.service_id = s.id
+        LEFT JOIN employees e ON a.employee_id = e.id
+        WHERE a.business_id = ? AND a.status IN ('pending','confirmed')
+          AND a.customer_reminder_1d_sent = 0
+          AND a.date = date('now','-3 hours','+1 day')
+      `).all(biz.id);
+      for (const appt of reminders1d) {
+        const jid = getCustomerJid(appt.customer_phone, appt.customer_id);
+        if (!jid) { d.prepare('UPDATE appointments SET customer_reminder_1d_sent = 1 WHERE id = ?').run(appt.id); continue; }
+        const msg = `📅 Recordatorio de turno\n\nHola ${appt.customer_name || ''}, te recordamos tu turno de mañana:\n\n✂️ ${appt.service_name || 'Servicio'}\n🕐 ${appt.time}${appt.employee_name ? '\n💅 ' + appt.employee_name : ''}\n\nTe esperamos 😊`;
+        try {
+          await conn.sock.sendMessage(jid, { text: msg });
+          d.prepare('UPDATE appointments SET customer_reminder_1d_sent = 1 WHERE id = ?').run(appt.id);
+          console.log(`[reminder] 1 día turno ${appt.id} enviado a cliente`);
+        } catch (e) { console.error('[reminder] Error 1d:', e.message); }
+      }
+
+      // Recordatorio 1 hora antes al cliente
+      const reminders1h = d.prepare(`
+        SELECT a.*, c.name as customer_name, c.phone as customer_phone,
+               s.name as service_name, e.name as employee_name
+        FROM appointments a
+        LEFT JOIN customers c ON a.customer_id = c.id
+        LEFT JOIN services s ON a.service_id = s.id
+        LEFT JOIN employees e ON a.employee_id = e.id
+        WHERE a.business_id = ? AND a.status IN ('pending','confirmed')
+          AND a.customer_reminder_1h_sent = 0
+          AND a.date = date('now','-3 hours')
+          AND a.time <= time('now','-3 hours','+1 hour')
+          AND a.time > time('now','-3 hours')
+      `).all(biz.id);
+      for (const appt of reminders1h) {
+        const jid = getCustomerJid(appt.customer_phone, appt.customer_id);
+        if (!jid) { d.prepare('UPDATE appointments SET customer_reminder_1h_sent = 1 WHERE id = ?').run(appt.id); continue; }
+        const msg = `🔔 ¡Falta 1 hora!\n\nHola ${appt.customer_name || ''}, tu turno es hoy a las ${appt.time}:\n\n✂️ ${appt.service_name || 'Servicio'}${appt.employee_name ? '\n💅 ' + appt.employee_name : ''}\n\nTe esperamos 🙌`;
+        try {
+          await conn.sock.sendMessage(jid, { text: msg });
+          d.prepare('UPDATE appointments SET customer_reminder_1h_sent = 1 WHERE id = ?').run(appt.id);
+          console.log(`[reminder] 1h turno ${appt.id} enviado a cliente`);
+        } catch (e) { console.error('[reminder] Error 1h:', e.message); }
       }
     }
     d.close();

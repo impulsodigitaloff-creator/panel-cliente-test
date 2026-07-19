@@ -69,6 +69,10 @@ db.exec(`
     status TEXT DEFAULT 'pending',
     notes TEXT DEFAULT '',
     sale_id INTEGER DEFAULT NULL,
+    reminder_sent INTEGER DEFAULT 0,
+    customer_confirmation_sent INTEGER DEFAULT 0,
+    customer_reminder_1d_sent INTEGER DEFAULT 0,
+    customer_reminder_1h_sent INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT (datetime('now', '-3 hours')),
     FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE,
     FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE,
@@ -143,6 +147,9 @@ try { db.exec('ALTER TABLE businesses ADD COLUMN hours TEXT DEFAULT \'\''); } ca
 try { db.exec('ALTER TABLE businesses ADD COLUMN instagram TEXT DEFAULT \'\''); } catch (e) {}
 try { db.exec('ALTER TABLE businesses ADD COLUMN human_phone TEXT DEFAULT \'\''); } catch (e) {}
 try { db.exec('ALTER TABLE appointments ADD COLUMN reminder_sent INTEGER DEFAULT 0'); } catch (e) {}
+try { db.exec('ALTER TABLE appointments ADD COLUMN customer_confirmation_sent INTEGER DEFAULT 0'); } catch (e) {}
+try { db.exec('ALTER TABLE appointments ADD COLUMN customer_reminder_1d_sent INTEGER DEFAULT 0'); } catch (e) {}
+try { db.exec('ALTER TABLE appointments ADD COLUMN customer_reminder_1h_sent INTEGER DEFAULT 0'); } catch (e) {}
 try { db.exec('ALTER TABLE wa_conversations ADD COLUMN remote_jid TEXT DEFAULT \'\''); } catch (e) {}
 
 const businessCount = db.prepare('SELECT COUNT(*) as count FROM businesses').get();
@@ -364,6 +371,54 @@ const dbMethods = {
   },
   markReminderSent(appointmentId) {
     db.prepare('UPDATE appointments SET reminder_sent = 1 WHERE id = ?').run(appointmentId);
+  },
+  getAppointmentsNeedingConfirmation(businessId) {
+    return db.prepare(`
+      SELECT a.*, c.name as customer_name, c.phone as customer_phone,
+             s.name as service_name, e.name as employee_name
+      FROM appointments a
+      LEFT JOIN customers c ON a.customer_id = c.id
+      LEFT JOIN services s ON a.service_id = s.id
+      LEFT JOIN employees e ON a.employee_id = e.id
+      WHERE a.business_id = ? AND a.status IN ('pending','confirmed') AND a.customer_confirmation_sent = 0
+    `).all(businessId);
+  },
+  getAppointmentsNeeding1dReminder(businessId) {
+    return db.prepare(`
+      SELECT a.*, c.name as customer_name, c.phone as customer_phone,
+             s.name as service_name, e.name as employee_name
+      FROM appointments a
+      LEFT JOIN customers c ON a.customer_id = c.id
+      LEFT JOIN services s ON a.service_id = s.id
+      LEFT JOIN employees e ON a.employee_id = e.id
+      WHERE a.business_id = ? AND a.status IN ('pending','confirmed')
+        AND a.customer_reminder_1d_sent = 0
+        AND a.date = date('now','-3 hours','+1 day')
+    `).all(businessId);
+  },
+  getAppointmentsNeeding1hReminder(businessId) {
+    return db.prepare(`
+      SELECT a.*, c.name as customer_name, c.phone as customer_phone,
+             s.name as service_name, e.name as employee_name
+      FROM appointments a
+      LEFT JOIN customers c ON a.customer_id = c.id
+      LEFT JOIN services s ON a.service_id = s.id
+      LEFT JOIN employees e ON a.employee_id = e.id
+      WHERE a.business_id = ? AND a.status IN ('pending','confirmed')
+        AND a.customer_reminder_1h_sent = 0
+        AND a.date = date('now','-3 hours')
+        AND a.time <= time('now','-3 hours','+1 hour')
+        AND a.time > time('now','-3 hours')
+    `).all(businessId);
+  },
+  markCustomerConfirmationSent(appointmentId) {
+    db.prepare('UPDATE appointments SET customer_confirmation_sent = 1 WHERE id = ?').run(appointmentId);
+  },
+  markCustomerReminder1dSent(appointmentId) {
+    db.prepare('UPDATE appointments SET customer_reminder_1d_sent = 1 WHERE id = ?').run(appointmentId);
+  },
+  markCustomerReminder1hSent(appointmentId) {
+    db.prepare('UPDATE appointments SET customer_reminder_1h_sent = 1 WHERE id = ?').run(appointmentId);
   },
   getAppointmentsByCustomer(customerId, businessId) {
     return db.prepare(`
