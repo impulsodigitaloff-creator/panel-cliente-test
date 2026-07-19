@@ -142,6 +142,7 @@ try { db.exec('ALTER TABLE businesses ADD COLUMN address TEXT DEFAULT \'\''); } 
 try { db.exec('ALTER TABLE businesses ADD COLUMN hours TEXT DEFAULT \'\''); } catch (e) {}
 try { db.exec('ALTER TABLE businesses ADD COLUMN instagram TEXT DEFAULT \'\''); } catch (e) {}
 try { db.exec('ALTER TABLE businesses ADD COLUMN human_phone TEXT DEFAULT \'\''); } catch (e) {}
+try { db.exec('ALTER TABLE appointments ADD COLUMN reminder_sent INTEGER DEFAULT 0'); } catch (e) {}
 
 const businessCount = db.prepare('SELECT COUNT(*) as count FROM businesses').get();
 if (businessCount.count === 0) {
@@ -336,6 +337,26 @@ module.exports = {
       WHERE a.business_id = ?
       ORDER BY a.date DESC, a.time
     `).all(businessId);
+  },
+  getUpcomingAppointmentsForReminder(businessId) {
+    const now = new Date(Date.now() - 3 * 3600 * 1000);
+    const inOneHour = new Date(now.getTime() + 60 * 60 * 1000);
+    const today = now.toISOString().slice(0, 10);
+    const maxTime = inOneHour.toISOString().slice(11, 16);
+    return db.prepare(`
+      SELECT a.*, c.name as customer_name, c.phone as customer_phone,
+             s.name as service_name, e.name as employee_name
+      FROM appointments a
+      LEFT JOIN customers c ON a.customer_id = c.id
+      LEFT JOIN services s ON a.service_id = s.id
+      LEFT JOIN employees e ON a.employee_id = e.id
+      WHERE a.business_id = ? AND a.date = ? AND a.time <= ? 
+        AND a.status IN ('pending','confirmed') AND a.reminder_sent = 0
+      ORDER BY a.time
+    `).all(businessId, today, maxTime);
+  },
+  markReminderSent(appointmentId) {
+    db.prepare('UPDATE appointments SET reminder_sent = 1 WHERE id = ?').run(appointmentId);
   },
   getAppointmentsByCustomer(customerId, businessId) {
     return db.prepare(`

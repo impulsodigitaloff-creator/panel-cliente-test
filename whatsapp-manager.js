@@ -326,6 +326,52 @@ function getConnection(businessId) {
 // Outbox processor every 2s
 setInterval(processOutbox, 2000);
 
+// Reminder processor every 60s - manda recordatorio al negocio 1h antes del turno
+async function processReminders() {
+  try {
+    const bizList = db.prepare ? null : null;
+    const Database = require('better-sqlite3');
+    const path = require('path');
+    const d = new Database(process.env.DB_PATH || path.join(__dirname, 'data', 'panelcliente.db'));
+    const businesses = d.prepare('SELECT id, name, phone FROM businesses WHERE active = 1').all();
+    for (const biz of businesses) {
+      const upcoming = d.prepare(`
+        SELECT a.*, c.name as customer_name, c.phone as customer_phone,
+               s.name as service_name, e.name as employee_name
+        FROM appointments a
+        LEFT JOIN customers c ON a.customer_id = c.id
+        LEFT JOIN services s ON a.service_id = s.id
+        LEFT JOIN employees e ON a.employee_id = e.id
+        WHERE a.business_id = ? AND a.date = date('now','-3 hours')
+          AND a.time <= time('now','-3 hours','+1 hour')
+          AND a.time > time('now','-3 hours')
+          AND a.status IN ('pending','confirmed') AND a.reminder_sent = 0
+        ORDER BY a.time
+      `).all(biz.id);
+      if (upcoming.length === 0) continue;
+      const conn = connections.get(biz.id);
+      if (!conn) continue;
+      const bizPhone = biz.phone || '';
+      const jid = bizPhone.includes('@') ? bizPhone : (bizPhone ? bizPhone + '@s.whatsapp.net' : null);
+      if (!jid) continue;
+      for (const appt of upcoming) {
+        const msg = `🔔 Recordatorio de turno\n\n👤 ${appt.customer_name || 'Cliente'}\n✂️ ${appt.service_name || 'Servicio'}\n🕐 ${appt.time}${appt.employee_name ? '\n💅 ' + appt.employee_name : ''}\n📞 ${appt.customer_phone || 'sin teléfono'}\n\n¡Falta 1 hora!`;
+        try {
+          await conn.sock.sendMessage(jid, { text: msg });
+          d.prepare('UPDATE appointments SET reminder_sent = 1 WHERE id = ?').run(appt.id);
+          console.log(`[reminder] Turno ${appt.id} recordado a ${biz.name}`);
+        } catch (e) {
+          console.error('[reminder] Error:', e.message);
+        }
+      }
+    }
+    d.close();
+  } catch (e) {
+    console.error('[reminder] Error general:', e.message);
+  }
+}
+setInterval(processReminders, 60000);
+
 // Auto-restart connections on startup
 function initAllConnections() {
   try {
