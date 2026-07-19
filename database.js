@@ -222,7 +222,7 @@ try {
   }
 } catch (e) { console.log('[db] Migración Carolina skip:', e.message); }
 
-module.exports = {
+const dbMethods = {
   // Auth
   createBusiness(data) {
     const hash = bcrypt.hashSync(data.password, 10);
@@ -531,3 +531,8 @@ module.exports = {
     db.prepare('DELETE FROM wa_conversations WHERE id = ?').run(id);
   }
 };
+
+// Exportamos los wrappers pero mantenemos acceso a métodos raw de better-sqlite3
+const exported = Object.create(db);
+Object.assign(exported, dbMethods);
+module.exports = exported;
