@@ -1,5 +1,4 @@
 const { makeWASocket, fetchLatestBaileysVersion, useMultiFileAuthState, Browsers, DisconnectReason } = require('@whiskeysockets/baileys');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
 const pino = require('pino');
 const path = require('path');
 const fs = require('fs');
@@ -8,8 +7,8 @@ const db = require('./database');
 const AUTH_DIR = process.env.AUTH_DIR || path.join(__dirname, 'data', 'auth');
 if (!fs.existsSync(AUTH_DIR)) fs.mkdirSync(AUTH_DIR, { recursive: true });
 
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY || '');
-const MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
+const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
 
 const connections = new Map();
 
@@ -44,15 +43,34 @@ ${empList}
 }
 
 async function callLLM(history, businessId) {
-  if (!process.env.GOOGLE_API_KEY) return '⚠️ WhatsApp sin configurar. Contactá al administrador.';
+  if (!GROQ_API_KEY) return '⚠️ WhatsApp sin configurar. Contactá al administrador.';
   try {
-    const model = genAI.getGenerativeModel({ model: MODEL, systemInstruction: buildSystemPrompt(businessId) });
-    const contents = history.map(m => ({
-      role: m.role === 'user' ? 'user' : 'model',
-      parts: [{ text: m.content }]
-    }));
-    const result = await model.generateContent({ contents });
-    return result.response.text();
+    const messages = [
+      { role: 'system', content: buildSystemPrompt(businessId) },
+      ...history.map(m => ({
+        role: m.role === 'user' ? 'user' : 'assistant',
+        content: m.content
+      }))
+    ];
+    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${GROQ_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: GROQ_MODEL,
+        messages,
+        temperature: 0.7,
+        max_tokens: 300
+      })
+    });
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`Groq ${res.status}: ${errText.slice(0, 200)}`);
+    }
+    const data = await res.json();
+    return data.choices[0].message.content.trim();
   } catch (err) {
     console.error('[bot] LLM error:', err.message);
     return 'Ocurrió un error. Déjame derivarte con un asesor humano.';
