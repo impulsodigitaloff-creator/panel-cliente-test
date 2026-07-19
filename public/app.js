@@ -767,7 +767,7 @@ async function pollWA(el) {
         msgsDiv.scrollTop = msgsDiv.scrollHeight;
       }
     }
-  } catch (e) {}
+  } catch (e) { console.error('[pollWA]', e); }
 }
 
 function renderWADisconnected(el, status) {
@@ -930,6 +930,16 @@ async function selectWAConv(id) {
   waSelectedConv = id;
   const conv = await api(`/api/whatsapp/conversations/${id}`);
   await renderWAConnected(document.getElementById('main-content'));
+  const msgsDiv = document.getElementById('wa-messages');
+  if (msgsDiv && conv.messages) {
+    msgsDiv.innerHTML = conv.messages.map(m => `
+      <div class="wa-msg wa-msg-${m.role}">
+        <div class="wa-msg-text">${m.content}</div>
+        <div class="wa-msg-time">${new Date(m.created_at).toLocaleTimeString('es-AR', {hour:'2-digit',minute:'2-digit'})}</div>
+      </div>
+    `).join('');
+    msgsDiv.scrollTop = msgsDiv.scrollHeight;
+  }
 }
 
 async function toggleWAMode(id) {
