@@ -137,6 +137,12 @@ db.exec(`
 
 `);
 
+// Migración: agregar columnas de info del negocio si no existen
+try { db.exec('ALTER TABLE businesses ADD COLUMN address TEXT DEFAULT \'\''); } catch (e) {}
+try { db.exec('ALTER TABLE businesses ADD COLUMN hours TEXT DEFAULT \'\''); } catch (e) {}
+try { db.exec('ALTER TABLE businesses ADD COLUMN instagram TEXT DEFAULT \'\''); } catch (e) {}
+try { db.exec('ALTER TABLE businesses ADD COLUMN human_phone TEXT DEFAULT \'\''); } catch (e) {}
+
 const businessCount = db.prepare('SELECT COUNT(*) as count FROM businesses').get();
 if (businessCount.count === 0) {
   const hash = (pw) => bcrypt.hashSync(pw, 10);
@@ -150,6 +156,8 @@ try {
   const bizList = db.prepare('SELECT id FROM businesses ORDER BY id').all();
   const svcIns = db.prepare('INSERT INTO services (business_id, name, price, duration) VALUES (?, ?, ?, ?)');
   const services = [
+    ['Corte hombre o niño', 15000, 30],
+    ['Corte mujer', 30000, 45],
     ['Brushing', 25000, 30],
     ['Peinado semirecogido', 40000, 45],
     ['Peinado recogido completo', 60000, 60],
@@ -157,11 +165,24 @@ try {
     ['Trenzados laterales', 30000, 40],
     ['Semitrenzado', 50000, 50],
     ['Trenzado completo', 70000, 60],
+    ['Lavado de cabello (incluye secado en máquina)', 15000, 20],
+    ['Aplicación de color/hena (incluye secado en máquina)', 20000, 30],
+    ['Color raíz o crecimiento', 35000, 60],
+    ['Coloración nacional', 50000, 90],
+    ['Coloración importada', 70000, 90],
+    ['Mechas o babylights', 75000, 120],
+    ['Balayage', 85000, 150],
+    ['Mechón contorno', 50000, 60],
     ['Barrido de color', 25000, 60],
     ['Decoloración global', 50000, 90],
-    ['Tratamiento caída de cabello', 35000, 45],
-    ['Lavado de cabello (con secado en máquina)', 15000, 20],
-    ['Aplicación de color/hena (con secado en máquina)', 20000, 30]
+    ['Ondulación permanente', 65000, 120],
+    ['Hidratación', 20000, 30],
+    ['Nutrición ácida/argán/biotina', 25000, 30],
+    ['Ampolla reestructurante', 30000, 30],
+    ['Alisado', 65000, 180],
+    ['Keratina/botox', 35000, 90],
+    ['Tratamiento matizador violeta o azul', 30000, 30],
+    ['Tratamiento caída de cabello (por sesión)', 35000, 45]
   ];
   for (const biz of bizList) {
     const svcCount = db.prepare('SELECT COUNT(*) as count FROM services WHERE business_id = ?').get(biz.id);
@@ -173,6 +194,27 @@ try {
     }
   }
 } catch (e) { console.log('[db] Migración servicios skip:', e.message); }
+
+// Migración: actualizar negocio "Carolina Lobos Estilista" con info completa
+try {
+  const caro = db.prepare("SELECT id FROM businesses WHERE name LIKE '%Carolina%' OR name LIKE '%carolina%' ORDER BY id DESC LIMIT 1").get();
+  if (caro) {
+    const existing = db.prepare('SELECT address FROM businesses WHERE id = ?').get(caro.id);
+    if (!existing.address) {
+      db.prepare('UPDATE businesses SET contact=?, phone=?, email=?, address=?, hours=?, instagram=?, human_phone=? WHERE id=?').run(
+        'Carolina Lobos',
+        '+54 264 470 1979',
+        'loboscarolinayanina@yahoo.com.ar',
+        'Mendoza Sur 340, J5402GUH, San Juan, Argentina',
+        'Lunes a Sábados: 9:30 a 20:00 hs. Domingos: Cerrado.',
+        '@carolinalobosestilista',
+        '+54 264 470 1979',
+        caro.id
+      );
+      console.log(`[db] Info de Carolina Lobos Estilista actualizada (negocio ${caro.id})`);
+    }
+  }
+} catch (e) { console.log('[db] Migración Carolina skip:', e.message); }
 
 module.exports = {
   // Auth
