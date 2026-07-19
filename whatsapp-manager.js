@@ -35,8 +35,20 @@ Info del negocio (usá esto si el cliente pregunta):
 - Teléfono para hablar con un humano: ${biz.human_phone || biz.phone || 'consultar'}
 - Email: ${biz.email || 'consultar'}
 - Instagram: ${biz.instagram || 'consultar'}
+- Horarios de atención: Lunes a Sábados 9:30-20:00, Domingos cerrado
 `;
   }
+
+function isBusinessOpen(date, time) {
+  const d = new Date(date + 'T' + time);
+  const day = d.getDay(); // 0=domingo, 1=lunes, ..., 6=sábado
+  if (day === 0) return false;
+  const [h, m] = time.split(':').map(Number);
+  const minutes = h * 60 + m;
+  const open = 9 * 60 + 30;  // 9:30
+  const close = 20 * 60;     // 20:00
+  return minutes >= open && minutes < close;
+}
 
   return `
 Sos la asistente virtual de "${bizName}", una peluquería/barbería/estética en San Juan. Respondé en español, tono cálido, profesional y amable. Usá emojis con moderación ✨.
@@ -162,6 +174,10 @@ async function callLLM(history, businessId, phone, pushName) {
 
 function createAppointmentFromAI(businessId, args, phone, pushName) {
   try {
+    // Validar horario de atención
+    if (!isBusinessOpen(args.fecha, args.hora)) {
+      return { success: false, message: 'Fuera de horario de atención (Lunes a Sábados 9:30-20:00)' };
+    }
     // Buscar o crear cliente por phone
     let customer = db.prepare('SELECT id FROM customers WHERE business_id = ? AND phone = ?').get(businessId, phone);
     if (!customer) {

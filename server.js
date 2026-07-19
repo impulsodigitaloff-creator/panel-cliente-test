@@ -187,6 +187,7 @@ app.get('/api/appointments/:id', requireAuth, (req, res) => {
 app.post('/api/appointments', requireAuth, (req, res) => {
   const { customer_id, service_id, employee_id, date, time, status, notes } = req.body;
   if (!customer_id || !date || !time) return res.status(400).json({ error: 'Cliente, fecha y hora requeridos' });
+  if (!db.isBusinessOpen(date, time)) return res.status(400).json({ error: 'Horario fuera de atención. Lunes a Sábados 9:30-20:00' });
   const id = db.createAppointment({ business_id: req.session.businessId, customer_id, service_id, employee_id, date, time, status, notes });
   res.json({ success: true, id });
 });

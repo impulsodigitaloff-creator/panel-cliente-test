@@ -236,7 +236,17 @@ try {
   }
 } catch (e) { console.log('[db] Migración Carolina skip:', e.message); }
 
+function isBusinessOpen(date, time) {
+  const d = new Date(date + 'T' + time);
+  const day = d.getDay();
+  if (day === 0) return false;
+  const [h, m] = time.split(':').map(Number);
+  const minutes = h * 60 + m;
+  return minutes >= 9 * 60 + 30 && minutes < 20 * 60;
+}
+
 const dbMethods = {
+  isBusinessOpen,
   // Auth
   createBusiness(data) {
     const hash = bcrypt.hashSync(data.password, 10);
