@@ -1062,13 +1062,24 @@ async function deleteWAConv(id) {
 async function renderSettings() {
   const el = document.getElementById('main-content');
   try {
-    const [allEmployees, allServices] = await Promise.all([
+    const [allEmployees, allServices, bizInfo] = await Promise.all([
       fetch('/api/employees?all=1', { credentials: 'include' }).then(r => r.json()),
-      fetch('/api/services?all=1', { credentials: 'include' }).then(r => r.json())
+      fetch('/api/services?all=1', { credentials: 'include' }).then(r => r.json()),
+      fetch('/api/business', { credentials: 'include' }).then(r => r.json())
     ]);
 
     el.innerHTML = `
       <div class="settings-container">
+      <div class="settings-section">
+        <h3>📋 Datos del Negocio</h3>
+        <div class="add-bar" style="flex-direction:column;align-items:stretch;">
+          <input type="text" id="biz-name" value="${escapeHtml(bizInfo.name || '')}" placeholder="Nombre">
+          <input type="text" id="biz-instagram" value="${escapeHtml(bizInfo.instagram || '')}" placeholder="Instagram (ej: @estilista.carolinalobos)">
+          <input type="text" id="biz-address" value="${escapeHtml(bizInfo.address || '')}" placeholder="Dirección">
+          <input type="text" id="biz-phone" value="${escapeHtml(bizInfo.human_phone || bizInfo.phone || '')}" placeholder="Teléfono de contacto">
+          <button class="btn btn-sm btn-primary" onclick="saveBusinessInfo()" style="align-self:flex-end;">Guardar cambios</button>
+        </div>
+      </div>
       <div class="settings-section">
         <h3>👤 Empleados</h3>
         <div id="employees-list">
@@ -1185,6 +1196,21 @@ async function deleteService(id) {
     await api(`/api/services/${id}`, { method: 'DELETE' });
     toast('Servicio desactivado', 'success');
     renderSettings();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function saveBusinessInfo() {
+  const data = {
+    instagram: document.getElementById('biz-instagram').value.trim(),
+    address: document.getElementById('biz-address').value.trim(),
+    human_phone: document.getElementById('biz-phone').value.trim()
+  };
+  try {
+    const biz = await (await fetch('/api/business', { credentials: 'include' })).json();
+    await api(`/api/businesses/${biz.id}/info`, {
+      method: 'PUT', body: JSON.stringify(data)
+    });
+    toast('Datos guardados ✅', 'success');
   } catch (err) { toast(err.message, 'error'); }
 }
 

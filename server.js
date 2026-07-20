@@ -454,6 +454,14 @@ app.delete('/api/sales/:id', requireAuth, (req, res) => {
   res.json({ success: true });
 });
 
+// Obtener info del negocio actual (sesión)
+app.get('/api/business', requireAuth, (req, res) => {
+  const biz = db.getBusinessById(req.session.businessId);
+  if (!biz) return res.status(404).json({ error: 'Negocio no encontrado' });
+  delete biz.password_hash;
+  res.json(biz);
+});
+
 // Master API (for CRM)
 app.post('/api/businesses', requireMasterKey, (req, res) => {
   const { name, contact, phone, email, password } = req.body;
