@@ -31,12 +31,11 @@ app.use((req, res, next) => {
 
 const sessionSecret = process.env.SESSION_SECRET;
 if (!sessionSecret) {
-  console.error('[server] FATAL: SESSION_SECRET no configurado');
-  process.exit(1);
+  console.warn('[server] WARNING: SESSION_SECRET no configurado. Usando fallback inseguro. Configurá SESSION_SECRET en variables de entorno.');
 }
 
 app.use(session({
-  secret: sessionSecret,
+  secret: sessionSecret || 'panelcliente-secret-fallback',
   resave: false,
   saveUninitialized: false,
   cookie: {
