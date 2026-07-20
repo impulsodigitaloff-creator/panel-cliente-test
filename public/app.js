@@ -288,7 +288,7 @@ function renderCustomersTable(el) {
             <th>Acciones</th>
           </tr>
         </thead>
-        <tbody>
+        <tbody id="customers-tbody">
           ${rows || '<tr><td colspan="4"><div class="empty-state"><p>No hay clientes registrados</p></div></td></tr>'}
         </tbody>
       </table>
@@ -298,7 +298,33 @@ function renderCustomersTable(el) {
 
 function searchCustomers() {
   customerSearch = document.getElementById('customer-search').value;
-  renderCustomersTable(document.getElementById('main-content'));
+  const tbody = document.getElementById('customers-tbody');
+  if (!tbody) return;
+  let data = state.customers;
+  if (customerSearch) {
+    const s = customerSearch.toLowerCase();
+    data = data.filter(c => c.name.toLowerCase().includes(s) || (c.phone || '').includes(s));
+  }
+  tbody.innerHTML = data.length
+    ? data.map(c => `
+    <tr>
+      <td>
+        <div class="info">
+          <span class="info-name">${escapeHtml(c.name)}</span>
+          <span class="info-sub">${escapeHtml(c.phone || c.email || 'Sin contacto')}</span>
+        </div>
+      </td>
+      <td>${escapeHtml(c.phone || '—')}</td>
+      <td>${escapeHtml(c.email || '—')}</td>
+      <td>
+        <div style="display:flex;gap:4px;">
+          <button class="btn btn-sm btn-secondary" onclick="openCustomerModal(${c.id})" title="Editar">✏️</button>
+          <button class="btn btn-sm btn-danger" onclick="deleteCustomer(${c.id})" title="Eliminar">🗑️</button>
+        </div>
+      </td>
+    </tr>
+  `).join('')
+    : '<tr><td colspan="4"><div class="empty-state"><p>No hay clientes registrados</p></div></td></tr>';
 }
 
 async function openCustomerModal(id) {
