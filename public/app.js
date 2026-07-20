@@ -857,45 +857,39 @@ async function renderWAConnected(el) {
   if (aiCount > 0) { badge.textContent = 'IA'; badge.style.display = ''; } else badge.style.display = 'none';
 
   el.innerHTML = `
-    <div id="wa-layout" style="display:flex;gap:0;height:calc(100vh - 120px);">
-      <div id="wa-conv-list" style="width:300px;min-width:300px;background:var(--bg-card);border-radius:12px;display:flex;flex-direction:column;overflow:hidden;">
-        <div style="padding:14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
-          <strong style="font-size:14px;">Conversaciones</strong>
-          <button class="btn btn-sm btn-danger" onclick="disconnectWA()" title="Desconectar" style="font-size:11px;">Desconectar</button>
+    <div class="wa-layout">
+      <div class="wa-sidebar">
+        <div class="wa-header">
+          <span>💬 Conversaciones</span>
+          <button class="btn btn-sm btn-danger" onclick="disconnectWA()">Desconectar</button>
         </div>
-        <div id="wa-conv-items" style="flex:1;overflow-y:auto;">
-          ${convs.length === 0 ? '<div style="padding:20px;text-align:center;font-size:13px;color:var(--text-muted);">Sin conversaciones aún</div>' :
+        <div id="wa-conv-items" class="wa-conv-list">
+          ${convs.length === 0 ? '<div style="padding:30px;text-align:center;color:var(--text-muted);font-size:13px;">Sin conversaciones aún</div>' :
             convs.map(c => `
               <div class="wa-conv-item ${activeConv && activeConv.id == c.id ? 'active' : ''}" data-conv-id="${c.id}" onclick="selectWAConv(${c.id})">
-                <div style="display:flex;justify-content:space-between;align-items:start;">
-                  <strong style="font-size:13px;">${c.name || c.phone}</strong>
-                  <span style="font-size:10px;color:var(--text-muted);">${c.mode === 'AI' ? '🤖' : '👤'}</span>
+                <div class="wa-name">
+                  <span>${c.name || c.phone}</span>
+                  <span class="mode-indicator">${c.mode === 'AI' ? '🤖' : '👤'}</span>
                 </div>
-                <div style="font-size:11px;color:var(--text-muted);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
-                  ${c.last_message ? c.last_message.slice(0, 40) : 'Sin mensajes'}
-                </div>
+                <div class="wa-last-msg">${c.last_message ? c.last_message.slice(0, 40) : 'Sin mensajes'}</div>
               </div>
             `).join('')}
         </div>
       </div>
-      <div id="wa-chat-area" style="flex:1;margin-left:12px;background:var(--bg-card);border-radius:12px;display:flex;flex-direction:column;overflow:hidden;">
+      <div id="wa-chat-area" class="wa-chat-area">
         ${activeConv ? `
-          <div style="padding:14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
-            <div>
-              <strong style="font-size:14px;">${activeConv.name || activeConv.phone}</strong>
-              <span style="font-size:11px;color:var(--text-muted);margin-left:8px;">${activeConv.phone}</span>
+          <div class="wa-chat-header">
+            <div class="wa-contact-info">
+              <strong>${activeConv.name || activeConv.phone}</strong>
+              <span>${activeConv.phone}</span>
             </div>
             <div style="display:flex;gap:6px;align-items:center;">
-              <span id="wa-mode-label" style="font-size:11px;padding:3px 8px;border-radius:6px;font-weight:500;background:${activeConv.mode === 'AI' ? 'rgba(48,209,88,0.15)' : 'rgba(255,214,10,0.15)'};color:${activeConv.mode === 'AI' ? '#30d158' : '#ffd60a'};">
-                ${activeConv.mode === 'AI' ? '🤖 IA' : '👤 Humano'}
-              </span>
-              <button class="btn btn-sm ${activeConv.mode === 'AI' ? 'btn-secondary' : 'btn-primary'}" onclick="toggleWAMode(${activeConv.id})" style="font-size:11px;">
-                Cambiar a ${activeConv.mode === 'AI' ? 'Humano' : 'IA'}
-              </button>
-              <button class="btn btn-sm btn-danger" onclick="deleteWAConv(${activeConv.id})" style="font-size:11px;">🗑️</button>
+              <span class="wa-mode-btn ${activeConv.mode === 'AI' ? 'ai' : ''}" onclick="toggleWAMode(${activeConv.id})">${activeConv.mode === 'AI' ? '🤖 IA' : '👤 Humano'}</span>
+              <button class="btn btn-sm ${activeConv.mode === 'AI' ? 'btn-secondary' : 'btn-primary'}" onclick="toggleWAMode(${activeConv.id})">Cambiar a ${activeConv.mode === 'AI' ? 'Humano' : 'IA'}</button>
+              <button class="btn btn-sm btn-danger" onclick="deleteWAConv(${activeConv.id})">🗑️</button>
             </div>
           </div>
-          <div id="wa-messages" style="flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:8px;">
+          <div id="wa-messages" class="wa-messages">
             ${activeConv.messages ? activeConv.messages.map(m => `
               <div class="wa-msg wa-msg-${m.role}">
                 <div class="wa-msg-text">${m.content}</div>
@@ -903,8 +897,8 @@ async function renderWAConnected(el) {
               </div>
             `).join('') : ''}
           </div>
-          <div style="padding:12px 14px;border-top:1px solid var(--border);display:flex;gap:8px;">
-            <input type="text" id="wa-msg-input" placeholder="${activeConv.mode === 'AI' ? '🤖 El bot responde automáticamente' : 'Escribí un mensaje...'}" style="flex:1;padding:10px 14px;background:var(--bg-input);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-size:13px;outline:none;" ${activeConv.mode === 'AI' ? 'disabled' : ''}>
+          <div class="wa-input-area">
+            <input type="text" id="wa-msg-input" placeholder="${activeConv.mode === 'AI' ? '🤖 El bot responde automáticamente' : 'Escribí un mensaje...'}" ${activeConv.mode === 'AI' ? 'disabled' : ''}>
             <button class="btn btn-primary" id="wa-send-btn" onclick="sendWAMessage(${activeConv.id})" ${activeConv.mode === 'AI' ? 'disabled' : ''}>Enviar</button>
           </div>
         ` : `
@@ -936,7 +930,7 @@ async function pairWA(phone) {
 }
 
 async function connectWA() {
-  const btns = document.querySelectorAll('.btn-primary, #wa-layout .btn');
+  const btns = document.querySelectorAll('.btn-primary, .wa-layout .btn');
   for (const b of btns) {
     if (b.textContent.includes('Conectar')) {
       b.disabled = true; b.textContent = 'Conectando...'; break;
@@ -973,22 +967,18 @@ function renderWAChatDetail(conv) {
   const chatArea = document.getElementById('wa-chat-area');
   if (!chatArea) return;
   chatArea.innerHTML = `
-    <div style="padding:14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
-      <div>
-        <strong style="font-size:14px;">${escapeHtml(conv.name || conv.phone)}</strong>
-        <span style="font-size:11px;color:var(--text-muted);margin-left:8px;">${escapeHtml(conv.phone)}</span>
+    <div class="wa-chat-header">
+      <div class="wa-contact-info">
+        <strong>${escapeHtml(conv.name || conv.phone)}</strong>
+        <span>${escapeHtml(conv.phone)}</span>
       </div>
       <div style="display:flex;gap:6px;align-items:center;">
-        <span id="wa-mode-label" style="font-size:11px;padding:3px 8px;border-radius:6px;font-weight:500;background:${conv.mode === 'AI' ? 'rgba(48,209,88,0.15)' : 'rgba(255,214,10,0.15)'};color:${conv.mode === 'AI' ? '#30d158' : '#ffd60a'};">
-          ${conv.mode === 'AI' ? '🤖 IA' : '👤 Humano'}
-        </span>
-        <button class="btn btn-sm ${conv.mode === 'AI' ? 'btn-secondary' : 'btn-primary'}" onclick="toggleWAMode(${conv.id})" style="font-size:11px;">
-          Cambiar a ${conv.mode === 'AI' ? 'Humano' : 'IA'}
-        </button>
-        <button class="btn btn-sm btn-danger" onclick="deleteWAConv(${conv.id})" style="font-size:11px;">🗑️</button>
+        <span class="wa-mode-btn ${conv.mode === 'AI' ? 'ai' : ''}" onclick="toggleWAMode(${conv.id})">${conv.mode === 'AI' ? '🤖 IA' : '👤 Humano'}</span>
+        <button class="btn btn-sm ${conv.mode === 'AI' ? 'btn-secondary' : 'btn-primary'}" onclick="toggleWAMode(${conv.id})">Cambiar a ${conv.mode === 'AI' ? 'Humano' : 'IA'}</button>
+        <button class="btn btn-sm btn-danger" onclick="deleteWAConv(${conv.id})">🗑️</button>
       </div>
     </div>
-    <div id="wa-messages" style="flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:8px;">
+    <div id="wa-messages" class="wa-messages">
       ${conv.messages ? conv.messages.map(m => `
         <div class="wa-msg wa-msg-${escapeHtml(m.role)}">
           <div class="wa-msg-text">${escapeHtml(m.content)}</div>
@@ -996,8 +986,8 @@ function renderWAChatDetail(conv) {
         </div>
       `).join('') : ''}
     </div>
-    <div style="padding:12px 14px;border-top:1px solid var(--border);display:flex;gap:8px;">
-      <input type="text" id="wa-msg-input" placeholder="${conv.mode === 'AI' ? '🤖 El bot responde automáticamente' : 'Escribí un mensaje...'}" style="flex:1;padding:10px 14px;background:var(--bg-input);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-size:13px;outline:none;" ${conv.mode === 'AI' ? 'disabled' : ''}>
+    <div class="wa-input-area">
+      <input type="text" id="wa-msg-input" placeholder="${conv.mode === 'AI' ? '🤖 El bot responde automáticamente' : 'Escribí un mensaje...'}" ${conv.mode === 'AI' ? 'disabled' : ''}>
       <button class="btn btn-primary" id="wa-send-btn" onclick="sendWAMessage(${conv.id})" ${conv.mode === 'AI' ? 'disabled' : ''}>Enviar</button>
     </div>
   `;
