@@ -12,7 +12,16 @@ if (!fs.existsSync(AUTH_DIR)) fs.mkdirSync(AUTH_DIR, { recursive: true });
 const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
 const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
-const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
+const WHISPER_MODEL = process.env.WHISPER_MODEL || (OPENAI_API_KEY ? 'whisper-1' : 'whisper-large-v3-turbo');
+
+// Reutilizamos el SDK de OpenAI apuntando a Groq para no agregar más dependencias ni claves.
+let openai = null;
+if (OPENAI_API_KEY) {
+  openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+} else if (GROQ_API_KEY) {
+  openai = new OpenAI({ apiKey: GROQ_API_KEY, baseURL: 'https://api.groq.com/openai/v1' });
+}
+const VOICE_ENABLED = !!openai;
 const MAX_VOICE_SIZE_MB = 25;
 
 const connections = new Map();
@@ -331,7 +340,7 @@ async function transcribeAudioBuffer(buffer, businessId, phone) {
   try {
     const result = await openai.audio.transcriptions.create({
       file: fs.createReadStream(tmpPath),
-      model: 'whisper-1',
+      model: WHISPER_MODEL,
       language: 'es',
       response_format: 'json'
     });
@@ -347,7 +356,7 @@ async function extractMessageText(sock, msg, businessId, phone) {
 
   const audioMsg = msg.message?.audioMessage || msg.message?.pttMessage;
   if (audioMsg) {
-    if (!OPENAI_API_KEY || !openai) {
+    if (!VOICE_ENABLED || !openai) {
       return { text: null, isVoice: true, error: 'voice_not_configured' };
     }
     console.log(`[bot] Audio recibido de ${phone}, descargando...`);
@@ -381,6 +390,7 @@ async function handleIncomingMessage(sock, msg, businessId) {
   }
 
   if (extracted.error === 'voice_not_configured') {
+    console.log(`[bot] Audio recibido de ${phone} pero no hay proveedor de transcripción configurado`);
     await sock.sendMessage(msg.key.remoteJid, { text: 'Perdón, todavía no puedo escuchar audios. Escribime el mensaje por favor 🙏' });
     return;
   }
