@@ -5,16 +5,19 @@ const fs = require('fs');
 const os = require('os');
 const db = require('./database');
 const OpenAI = require('openai');
+const { GoogleGenAI } = require('@google/genai');
 
 const AUTH_DIR = process.env.AUTH_DIR || path.join(__dirname, 'data', 'auth');
 if (!fs.existsSync(AUTH_DIR)) fs.mkdirSync(AUTH_DIR, { recursive: true });
 
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+const gemini = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null;
+
+// Configuración de transcripción de voz (Groq Whisper por defecto, OpenAI opcional)
 const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
-const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const WHISPER_MODEL = process.env.WHISPER_MODEL || (OPENAI_API_KEY ? 'whisper-1' : 'whisper-large-v3-turbo');
-
-// Reutilizamos el SDK de OpenAI apuntando a Groq para no agregar más dependencias ni claves.
 let openai = null;
 if (OPENAI_API_KEY) {
   openai = new OpenAI({ apiKey: OPENAI_API_KEY, timeout: 30000 });
@@ -206,58 +209,53 @@ ${empList}
 }
 
 async function callLLM(history, businessId, phone, pushName) {
-  if (!GROQ_API_KEY) return '⚠️ WhatsApp sin configurar. Contactá al administrador.';
+  if (!GEMINI_API_KEY || !gemini) return '⚠️ WhatsApp sin configurar. Contactá al administrador.';
   let resolveLock, rejectLock;
   try {
-    // Serialize LLM calls per business to avoid TPM spikes
+    // Serialize LLM calls per business to avoid spikes
     while (llmLocks.has(businessId)) {
       try { await llmLocks.get(businessId); } catch (e) { /* ignore */ }
     }
     const lockPromise = new Promise((res, rej) => { resolveLock = res; rejectLock = rej; });
     llmLocks.set(businessId, lockPromise);
 
-    const messages = [
-      { role: 'system', content: buildSystemPrompt(businessId) },
-      ...history.map(m => ({
-        role: m.role === 'user' ? 'user' : 'assistant',
-        content: m.content
-      }))
-    ];
+    const systemPrompt = buildSystemPrompt(businessId);
+
+    // Convertir historial al formato de Gemini
+    let contents = history
+      .filter(m => m.content && m.content.trim())
+      .map(m => ({
+        role: m.role === 'user' ? 'user' : 'model',
+        parts: [{ text: m.content.trim() }]
+      }));
+
+    // Gemini exige que el primer mensaje sea del usuario
+    if (contents.length > 0 && contents[0].role !== 'user') {
+      contents.shift();
+    }
+    if (contents.length === 0) {
+      contents = [{ role: 'user', parts: [{ text: 'Hola' }] }];
+    }
 
     let lastErr;
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${GROQ_API_KEY}`
-          },
-          body: JSON.stringify({
-            model: GROQ_MODEL,
-            messages,
+        const result = await gemini.models.generateContent({
+          model: GEMINI_MODEL,
+          contents,
+          config: {
+            systemInstruction: systemPrompt,
             temperature: 0.7,
-            max_tokens: 500
-          })
+            maxOutputTokens: 500
+          }
         });
-        if (res.status === 429) {
-          const errText = await res.text();
-          lastErr = `Groq 429: ${errText.slice(0, 200)}`;
-          console.warn(`[bot] LLM rate limit (intento ${attempt + 1}/3), esperando ${(attempt + 1) * 15}s...`);
-          await new Promise(r => setTimeout(r, (attempt + 1) * 15000));
-          continue;
-        }
-        if (!res.ok) {
-          const errText = await res.text();
-          throw new Error(`Groq ${res.status}: ${errText.slice(0, 200)}`);
-        }
-        const data = await res.json();
-        const choice = data.choices[0];
-        return choice.message.content.trim();
+        if (!result || !result.text) throw new Error('Respuesta vacía de Gemini');
+        return result.text.trim();
       } catch (err) {
         lastErr = err.message;
+        console.warn(`[bot] Gemini error (intento ${attempt + 1}/3): ${lastErr}`);
         if (attempt < 2) {
-          await new Promise(r => setTimeout(r, (attempt + 1) * 15000));
+          await new Promise(r => setTimeout(r, (attempt + 1) * 3000));
         }
       }
     }
