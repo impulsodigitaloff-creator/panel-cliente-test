@@ -21,6 +21,7 @@ function escapeHtml(text) {
 
 async function api(path, opts = {}) {
   const res = await fetch(path, {
+    credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...opts.headers },
     ...opts
   });
@@ -1046,8 +1047,8 @@ async function renderSettings() {
   const el = document.getElementById('main-content');
   try {
     const [allEmployees, allServices] = await Promise.all([
-      fetch('/api/employees?all=1').then(r => r.json()),
-      fetch('/api/services?all=1').then(r => r.json())
+      fetch('/api/employees?all=1', { credentials: 'include' }).then(r => r.json()),
+      fetch('/api/services?all=1', { credentials: 'include' }).then(r => r.json())
     ]);
 
     el.innerHTML = `
