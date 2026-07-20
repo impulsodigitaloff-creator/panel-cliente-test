@@ -11,6 +11,7 @@ const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
 const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
 
 const connections = new Map();
+const llmLocks = new Map(); // businessId -> Promise
 
 function getAuthPath(businessId) {
   const p = path.join(AUTH_DIR, `business_${businessId}`);
@@ -149,67 +150,40 @@ function buildSystemPrompt(businessId) {
   }).join('\n') || '  (sin servicios cargados)';
   let empList = employees.map(e => `  - ${e.name}${e.phone ? ' ('+e.phone+')' : ''}`).join('\n') || '  (sin empleados cargados)';
 
-  let bizInfo = '';
-  if (biz) {
-    bizInfo = `
-Info del negocio (usá esto si el cliente pregunta):
-- Dirección: ${biz.address || 'consultar'}
-- Horarios: ${biz.hours || 'consultar'}
-- Teléfono para hablar con un humano: ${biz.human_phone || biz.phone || 'consultar'}
-- Email: ${biz.email || 'consultar'}
-- Instagram: ${biz.instagram || 'consultar'}
-- Horarios de atención: Lunes a Sábados 9:30-20:00, Domingos cerrado
-`;
-  }
-
   const address = (biz && biz.address) ? biz.address : 'Mendoza Sur 340, J5402GUH, San Juan, Argentina';
   const mapsLink = 'https://maps.google.com/?q=Mendoza+Sur+340+J5402GUH+San+Juan+Argentina';
+  const phone = biz && (biz.human_phone || biz.phone) ? (biz.human_phone || biz.phone) : 'consultar';
+  const instagram = biz && biz.instagram ? biz.instagram : 'consultar';
   return `
-Sos una estilista profesional y asesora de "${bizName}". Tu trabajo NO es solo dar precios: sos una consultora de belleza capilar. Respondé en español, tono cálido, profesional, amable y cercano. Usá emojis con moderación ✨.
+Sos la asistente de "${bizName}". Asesorá con tono cálido, profesional y breve (2-4 líneas, emojis moderados ✨).
+Tu objetivo: entender qué necesita el cliente, recomendar el servicio correcto de la lista y agendar turno.
 
-Tu rol: entender la necesidad del cliente, recomendarle el mejor servicio, explicarle por qué y recién después mostrar precio y agendar turno.
-${bizInfo}
-FLUJO DE ATENCIÓN OBLIGATORIO:
-1. SALUDO: "¡Hola! Soy la asistente de ${bizName}. Contame, ¿qué te gustaría lograr con tu cabello hoy? ¿Buscás un cambio, mantenimiento o reparación? 😊"
-2. DIAGNÓSTICO: Antes de recomendar, hacé preguntas UNA A UNA para entender:
-   - ¿Qué problema o deseo tiene? (seco, dañado, frizz, sin brillo, cambio de color, cubrir raíces, etc.)
-   - ¿El cabello está teñido o es natural?
-   - ¿Hace cuánto se hizo un color/tratamiento?
-   - ¿Qué resultado espera?
-   - ¿Tiene alguna alergia o sensibilidad en el cuero cabelludo?
-   NO hagas todas las preguntas de golpe. Adaptate a la conversación.
-3. RECOMENDACIÓN: Con la info suficiente, recomendá 1 o 2 servicios de la lista EXPLICANDO:
-   - Para qué sirve.
-   - Qué beneficios trae.
-   - En qué casos se recomienda.
-   - Por qué se ajusta a lo que el cliente contó.
-4. PRECIO: Mostrá el precio real de la base de datos SOLO cuando el cliente lo pida o cuando ya esté de acuerdo con la recomendación.
-5. COMPLEMENTARIOS: Si aplica, sugerí tratamientos complementarios explicando el motivo, pero sin insistir ni presionar.
-6. RESERVA: Solo cuando el cliente confirme que quiere el servicio, pedí nombre, fecha y hora para agendar el turno.
+Info del negocio:
+- Dirección: ${address}
+- Mapa: ${mapsLink}
+- Horarios: Lunes a Sábados 9:30-20:00, Domingos cerrado
+- Teléfono humano: ${phone}
+- Instagram: ${instagram}
+
+Flujo de atención:
+1. Saludá y preguntá qué busca el cliente (cambio, mantenimiento o reparación).
+2. Hacé preguntas UNA A UNA según la necesidad (tipo de cabello, si está teñido, resultado esperado, alergias).
+3. Recomendá 1-2 servicios de la lista explicando brevemente por qué.
+4. Mostrá precio y duración cuando el cliente lo pida o esté de acuerdo.
+5. Para agendar, pedí nombre, fecha y hora. Solo ofrecé horarios de lunes a sábado 9:30-20:00.
 
 Reglas CRÍTICAS:
-- NUNCA inventes servicios, tratamientos o precios. Usá EXACTAMENTE los que están en la lista de la base de datos.
-- NUNCA respondas solo con un precio. Siempre acompañá con una breve explicación profesional.
-- Si el cliente no sabe qué necesita, hacéle preguntas de diagnóstico antes de recomendar.
-- Si el cliente dice "mi pelo está seco/sin brillo", recomendá hidratación o nutrición explicando por qué.
-- Si el cliente dice "mi pelo está muy dañado", recomendá ampolla reestructurante o keratina/botox.
-- Si el cliente dice "quiero cambiar de color", preguntá si busca cubrir canas, reflejos, mechas o un cambio total, y luego recomendá el servicio adecuado.
-- Si el cliente dice "quiero cortarme el pelo", preguntá si es corte de mujer o hombre/niño y luego agendá el correcto.
-- Horarios de atención: Lunes a Sábados de 9:30 a 20:00 hs. Domingos CERRADO.
-- SOLO ofrecé horarios disponibles entre 9:30 y 20:00 de lunes a sábado. NUNCA sugieras horarios fuera de ese rango ni domingos.
-- Si el cliente pide un horario fuera de atención u ocupado, respondé amablemente y ofrecé las alternativas más cercanas disponibles.
-- Si pide hablar con un humano/asesor, dale el teléfono: ${biz && (biz.human_phone || biz.phone) ? (biz.human_phone || biz.phone) : 'consultar'} 📞
-- Si pide la ubicación, dale la dirección: ${address} y el link: ${mapsLink} 📍
-- Si pide el Instagram, dale: ${biz && biz.instagram ? biz.instagram : 'consultar'} 📷
-- Si pregunta horarios, dale: Lunes a Sábados 9:30-20:00, Domingos cerrado 🕐
-- Mensajes breves, cordiales y claros, 2 a 4 líneas. Nunca saturés al cliente.
+- NUNCA inventes servicios, precios o tratamientos. Usá EXACTAMENTE la lista de abajo.
+- Si pide horario fuera de atención u ocupado, ofrecé alternativas cercanas disponibles.
 - Si no podés resolver algo: "Perdón, déjame derivarte con un asesor 🙏"
-- Cuando confirmes un turno, INCLUÍ siempre: fecha, hora, servicio, nombre del cliente, dirección (${address}) y el mensaje de que puede cancelar/reprogramar por WhatsApp.
-- REGLA DE AGENDADO: cuando ya tengas el nombre, fecha y hora del cliente dentro del horario de atención, agregá al final de tu mensaje EXACTAMENTE esta línea (sin decirle al cliente que lo estás agregando):\n[AGENDAR nombre=NOMBRE fecha=YYYY-MM-DD hora=HH:MM servicio=SERVICIO]
+- Si pide hablar con un humano: ${phone} 📞
+- Si pide la ubicación: ${address} (${mapsLink}) 📍
+- Cuando confirmes un turno, INCLUÍ siempre: fecha, hora, servicio, nombre del cliente, dirección y que puede cancelar/reprogramar por WhatsApp.
+- REGLA DE AGENDADO: al final de tu mensaje agregá EXACTAMENTE esta línea oculta:\n[AGENDAR nombre=NOMBRE fecha=YYYY-MM-DD hora=HH:MM servicio=SERVICIO]
 
-Ejemplo: si el cliente es Augusto, pide corte para mañana 20/07 a las 11:30, tu mensaje termina con:\n[AGENDAR nombre=Augusto fecha=2026-07-20 hora=11:30 servicio=Corte]
+Ejemplo: [AGENDAR nombre=Augusto fecha=2026-07-20 hora=11:30 servicio=Corte]
 
-Servicios disponibles en la base de datos (recomendá SOLO de esta lista):
+Servicios disponibles (solo de esta lista):
 ${srvList}
 
 Empleados:
@@ -219,7 +193,15 @@ ${empList}
 
 async function callLLM(history, businessId, phone, pushName) {
   if (!GROQ_API_KEY) return '⚠️ WhatsApp sin configurar. Contactá al administrador.';
+  let resolveLock, rejectLock;
   try {
+    // Serialize LLM calls per business to avoid TPM spikes
+    while (llmLocks.has(businessId)) {
+      try { await llmLocks.get(businessId); } catch (e) { /* ignore */ }
+    }
+    const lockPromise = new Promise((res, rej) => { resolveLock = res; rejectLock = rej; });
+    llmLocks.set(businessId, lockPromise);
+
     const messages = [
       { role: 'system', content: buildSystemPrompt(businessId) },
       ...history.map(m => ({
@@ -227,29 +209,49 @@ async function callLLM(history, businessId, phone, pushName) {
         content: m.content
       }))
     ];
-    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${GROQ_API_KEY}`
-      },
-      body: JSON.stringify({
-        model: GROQ_MODEL,
-        messages,
-        temperature: 0.7,
-        max_tokens: 600
-      })
-    });
-    if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(`Groq ${res.status}: ${errText.slice(0, 200)}`);
+
+    let lastErr;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${GROQ_API_KEY}`
+          },
+          body: JSON.stringify({
+            model: GROQ_MODEL,
+            messages,
+            temperature: 0.7,
+            max_tokens: 500
+          })
+        });
+        if (res.status === 429) {
+          const errText = await res.text();
+          lastErr = `Groq 429: ${errText.slice(0, 200)}`;
+          console.warn(`[bot] LLM rate limit (intento ${attempt + 1}/3), esperando ${(attempt + 1) * 15}s...`);
+          await new Promise(r => setTimeout(r, (attempt + 1) * 15000));
+          continue;
+        }
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(`Groq ${res.status}: ${errText.slice(0, 200)}`);
+        }
+        const data = await res.json();
+        const choice = data.choices[0];
+        return choice.message.content.trim();
+      } catch (err) {
+        lastErr = err.message;
+        if (attempt < 2) {
+          await new Promise(r => setTimeout(r, (attempt + 1) * 15000));
+        }
+      }
     }
-    const data = await res.json();
-    const choice = data.choices[0];
-    return choice.message.content.trim();
-  } catch (err) {
-    console.error('[bot] LLM error:', err.message);
-    return 'Ocurrió un error. Déjame derivarte con un asesor humano.';
+    console.error('[bot] LLM error tras reintentos:', lastErr);
+    return 'Perdón, estoy teniendo problemas de conexión. Déjame derivarte con un asesor humano 🙏';
+  } finally {
+    if (resolveLock) resolveLock();
+    llmLocks.delete(businessId);
   }
 }
 
