@@ -164,7 +164,7 @@ function buildSystemPrompt(businessId) {
   const bizName = (biz && biz.name) ? biz.name : 'nuestro salón';
   let srvList = services.map(s => {
     const desc = getServiceDescription(s.name);
-    return `  - ${s.name}: $${s.price} (${s.duration} min) — ${desc}`;
+    return `  - ${s.name}: desde $${s.price} (${s.duration} min) — ${desc}`;
   }).join('\n') || '  (sin servicios cargados)';
   let empList = employees.map(e => `  - ${e.name}${e.phone ? ' ('+e.phone+')' : ''}`).join('\n') || '  (sin empleados cargados)';
 
@@ -187,7 +187,7 @@ Flujo de atención:
 1. Saludá y preguntá qué busca el cliente (cambio, mantenimiento o reparación).
 2. Hacé preguntas UNA A UNA según la necesidad (tipo de cabello, si está teñido, resultado esperado, alergias).
 3. Recomendá 1-2 servicios de la lista explicando brevemente por qué.
-4. Mostrá precio y duración cuando el cliente lo pida o esté de acuerdo.
+4. Mostrá los precios como "desde $X" (son referenciales, pueden variar según el caso) y la duración cuando el cliente lo pida o esté de acuerdo.
 5. Para agendar, pedí nombre, fecha y hora. Solo ofrecé horarios de lunes a sábado 9:30-20:00.
 
 Reglas CRÍTICAS:
