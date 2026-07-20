@@ -10,22 +10,33 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 const isProduction = process.env.NODE_ENV === 'production';
 
-app.set('trust proxy', 1);
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.set('trust proxy', ['loopback', 'linklocal']);
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // CORS for CRM
+const allowedOrigins = process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : ['http://localhost:3000'];
 app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', 'http://localhost:3000');
+  const origin = req.headers.origin;
+  if (origin && allowedOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  }
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-api-key');
   if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
 });
 
+const sessionSecret = process.env.SESSION_SECRET;
+if (!sessionSecret) {
+  console.error('[server] FATAL: SESSION_SECRET no configurado');
+  process.exit(1);
+}
+
 app.use(session({
-  secret: process.env.SESSION_SECRET || 'panelcliente-secret',
+  secret: sessionSecret,
   resave: false,
   saveUninitialized: false,
   cookie: {
@@ -33,7 +44,8 @@ app.use(session({
     httpOnly: true,
     sameSite: isProduction ? 'none' : 'lax',
     maxAge: 24 * 60 * 60 * 1000
-  }
+  },
+  name: 'pc.sid'
 }));
 
 function requireAuth(req, res, next) {
@@ -51,16 +63,75 @@ function requireMasterKey(req, res, next) {
   next();
 }
 
+function validateId(param) {
+  const id = parseInt(param, 10);
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+function validateEmail(email) {
+  if (typeof email !== 'string') return false;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+}
+
+function validateDate(date) {
+  if (typeof date !== 'string') return false;
+  return /^\d{4}-\d{2}-\d{2}$/.test(date) && !isNaN(Date.parse(date));
+}
+
+function validateTime(time) {
+  if (typeof time !== 'string') return false;
+  if (!/^\d{2}:\d{2}$/.test(time)) return false;
+  const [h, m] = time.split(':').map(Number);
+  return h >= 0 && h <= 23 && m >= 0 && m <= 59;
+}
+
+function validatePositiveNumber(n) {
+  const num = Number(n);
+  return Number.isFinite(num) && num >= 0;
+}
+
+function validateStatus(status) {
+  return ['pending', 'confirmed', 'completed', 'cancelled'].includes(status);
+}
+
+function sanitizeString(str, maxLen = 500) {
+  if (typeof str !== 'string') return '';
+  return str.trim().slice(0, maxLen);
+}
+
 // Auth
+const loginAttempts = new Map();
+const MAX_LOGIN_ATTEMPTS = 5;
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+
 app.post('/api/login', (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) {
     return res.status(400).json({ error: 'Email y contraseña requeridos' });
   }
-  const business = db.getBusinessByEmail(email);
+  const cleanEmail = email.trim().toLowerCase();
+  if (!validateEmail(cleanEmail)) {
+    return res.status(400).json({ error: 'Email inválido' });
+  }
+
+  // Rate limiting básico por IP + email
+  const key = `${req.ip || req.connection.remoteAddress}:${cleanEmail}`;
+  const now = Date.now();
+  const attempts = loginAttempts.get(key);
+  if (attempts && attempts.count >= MAX_LOGIN_ATTEMPTS && now - attempts.last < LOGIN_WINDOW_MS) {
+    return res.status(429).json({ error: 'Demasiados intentos. Probá más tarde.' });
+  }
+
+  const business = db.getBusinessByEmail(cleanEmail);
   if (!business || !bcrypt.compareSync(password, business.password_hash)) {
+    const current = loginAttempts.get(key) || { count: 0, last: now };
+    current.count += 1;
+    current.last = now;
+    loginAttempts.set(key, current);
     return res.status(401).json({ error: 'Credenciales inválidas' });
   }
+
+  loginAttempts.delete(key);
   req.session.businessId = business.id;
   req.session.businessName = business.name;
   res.json({ success: true, business: { id: business.id, name: business.name } });
@@ -133,18 +204,30 @@ app.get('/api/employees', requireAuth, (req, res) => {
 
 app.post('/api/employees', requireAuth, (req, res) => {
   const { name, phone } = req.body;
-  if (!name) return res.status(400).json({ error: 'Nombre requerido' });
-  const id = db.createEmployee({ business_id: req.session.businessId, name, phone });
+  const cleanName = sanitizeString(name, 100);
+  if (!cleanName) return res.status(400).json({ error: 'Nombre requerido' });
+  const id = db.createEmployee({ business_id: req.session.businessId, name: cleanName, phone: sanitizeString(phone, 50) });
   res.json({ success: true, id });
 });
 
 app.put('/api/employees/:id', requireAuth, (req, res) => {
-  db.updateEmployee(req.params.id, req.body);
+  const id = validateId(req.params.id);
+  if (!id) return res.status(400).json({ error: 'ID inválido' });
+  const e = db.getEmployeeById(id, req.session.businessId);
+  if (!e) return res.status(404).json({ error: 'No encontrado' });
+  const { name, phone } = req.body;
+  const cleanName = sanitizeString(name, 100);
+  if (!cleanName) return res.status(400).json({ error: 'Nombre requerido' });
+  db.updateEmployee(id, { name: cleanName, phone: sanitizeString(phone, 50) });
   res.json({ success: true });
 });
 
 app.delete('/api/employees/:id', requireAuth, (req, res) => {
-  db.deleteEmployee(req.params.id);
+  const id = validateId(req.params.id);
+  if (!id) return res.status(400).json({ error: 'ID inválido' });
+  const e = db.getEmployeeById(id, req.session.businessId);
+  if (!e) return res.status(404).json({ error: 'No encontrado' });
+  db.deleteEmployee(id);
   res.json({ success: true });
 });
 
@@ -157,52 +240,100 @@ app.get('/api/services', requireAuth, (req, res) => {
 
 app.post('/api/services', requireAuth, (req, res) => {
   const { name, price, duration } = req.body;
-  if (!name) return res.status(400).json({ error: 'Nombre requerido' });
-  const id = db.createService({ business_id: req.session.businessId, name, price, duration });
+  const cleanName = sanitizeString(name, 100);
+  if (!cleanName) return res.status(400).json({ error: 'Nombre requerido' });
+  if (!validatePositiveNumber(price)) return res.status(400).json({ error: 'Precio inválido' });
+  const durationNum = parseInt(duration, 10);
+  if (!Number.isInteger(durationNum) || durationNum <= 0) return res.status(400).json({ error: 'Duración inválida' });
+  const id = db.createService({ business_id: req.session.businessId, name: cleanName, price, duration: durationNum });
   res.json({ success: true, id });
 });
 
 app.put('/api/services/:id', requireAuth, (req, res) => {
-  db.updateService(req.params.id, req.body);
+  const id = validateId(req.params.id);
+  if (!id) return res.status(400).json({ error: 'ID inválido' });
+  const s = db.getServiceById(id, req.session.businessId);
+  if (!s) return res.status(404).json({ error: 'No encontrado' });
+  const { name, price, duration } = req.body;
+  const cleanName = sanitizeString(name, 100);
+  if (!cleanName) return res.status(400).json({ error: 'Nombre requerido' });
+  if (!validatePositiveNumber(price)) return res.status(400).json({ error: 'Precio inválido' });
+  const durationNum = parseInt(duration, 10);
+  if (!Number.isInteger(durationNum) || durationNum <= 0) return res.status(400).json({ error: 'Duración inválida' });
+  db.updateService(id, { name: cleanName, price, duration: durationNum });
   res.json({ success: true });
 });
 
 app.delete('/api/services/:id', requireAuth, (req, res) => {
-  db.deleteService(req.params.id);
+  const id = validateId(req.params.id);
+  if (!id) return res.status(400).json({ error: 'ID inválido' });
+  const s = db.getServiceById(id, req.session.businessId);
+  if (!s) return res.status(404).json({ error: 'No encontrado' });
+  db.deleteService(id);
   res.json({ success: true });
 });
 
 // Appointments
 app.get('/api/appointments', requireAuth, (req, res) => {
   const { date } = req.query;
+  if (date && !validateDate(date)) return res.status(400).json({ error: 'Fecha inválida' });
   res.json(db.getAppointments(req.session.businessId, date || null));
 });
 
 app.get('/api/appointments/:id', requireAuth, (req, res) => {
-  const a = db.getAppointmentById(req.params.id);
+  const id = validateId(req.params.id);
+  if (!id) return res.status(400).json({ error: 'ID inválido' });
+  const a = db.getAppointmentById(id);
   if (!a || a.business_id !== req.session.businessId) return res.status(404).json({ error: 'No encontrado' });
   res.json(a);
 });
 
 app.post('/api/appointments', requireAuth, (req, res) => {
   const { customer_id, service_id, employee_id, date, time, status, notes } = req.body;
-  if (!customer_id || !date || !time) return res.status(400).json({ error: 'Cliente, fecha y hora requeridos' });
+  const custId = validateId(customer_id);
+  if (!custId) return res.status(400).json({ error: 'Cliente requerido' });
+  if (!validateDate(date)) return res.status(400).json({ error: 'Fecha inválida' });
+  if (!validateTime(time)) return res.status(400).json({ error: 'Hora inválida' });
   if (!db.isBusinessOpen(date, time)) return res.status(400).json({ error: 'Horario fuera de atención. Lunes a Sábados 9:30-20:00' });
-  const id = db.createAppointment({ business_id: req.session.businessId, customer_id, service_id, employee_id, date, time, status, notes });
+
+  const customer = db.getCustomerById(custId);
+  if (!customer || customer.business_id !== req.session.businessId) return res.status(400).json({ error: 'Cliente inválido' });
+  if (service_id) {
+    const svc = db.getServiceById(parseInt(service_id, 10), req.session.businessId);
+    if (!svc) return res.status(400).json({ error: 'Servicio inválido' });
+  }
+  if (employee_id) {
+    const emp = db.getEmployeeById(parseInt(employee_id, 10), req.session.businessId);
+    if (!emp) return res.status(400).json({ error: 'Empleado inválido' });
+  }
+  if (status && !validateStatus(status)) return res.status(400).json({ error: 'Estado inválido' });
+
+  const id = db.createAppointment({ business_id: req.session.businessId, customer_id: custId, service_id: service_id ? parseInt(service_id, 10) : null, employee_id: employee_id ? parseInt(employee_id, 10) : null, date, time, status, notes: sanitizeString(notes, 1000) });
   res.json({ success: true, id });
 });
 
 app.put('/api/appointments/:id', requireAuth, (req, res) => {
-  const a = db.getAppointmentById(req.params.id);
+  const id = validateId(req.params.id);
+  if (!id) return res.status(400).json({ error: 'ID inválido' });
+  const a = db.getAppointmentById(id);
   if (!a || a.business_id !== req.session.businessId) return res.status(404).json({ error: 'No encontrado' });
-  db.updateAppointment(req.params.id, req.body);
+  const { customer_id, service_id, employee_id, date, time, status, notes } = req.body;
+  if (date && !validateDate(date)) return res.status(400).json({ error: 'Fecha inválida' });
+  if (time && !validateTime(time)) return res.status(400).json({ error: 'Hora inválida' });
+  if (date && time && !db.isBusinessOpen(date, time)) return res.status(400).json({ error: 'Horario fuera de atención' });
+  db.updateAppointment(id, { customer_id, service_id, employee_id, date, time, status, notes: sanitizeString(notes, 1000) });
   res.json({ success: true });
 });
 
 app.patch('/api/appointments/:id/status', requireAuth, (req, res) => {
-  const a = db.getAppointmentById(req.params.id);
+  const id = validateId(req.params.id);
+  if (!id) return res.status(400).json({ error: 'ID inválido' });
+  const a = db.getAppointmentById(id);
   if (!a || a.business_id !== req.session.businessId) return res.status(404).json({ error: 'No encontrado' });
-  const result = db.updateAppointmentStatus(req.params.id, req.body.status);
+  const status = req.body.status;
+  if (!validateStatus(status)) return res.status(400).json({ error: 'Estado inválido' });
+  const result = db.updateAppointmentStatus(id, status);
+  if (result && result.error) return res.status(404).json({ error: result.error });
   if (result && result.saleCreated) {
     return res.json({ success: true, saleCreated: true, saleId: result.saleId, amount: result.amount, message: 'Venta generada automáticamente' });
   }
@@ -213,92 +344,148 @@ app.patch('/api/appointments/:id/status', requireAuth, (req, res) => {
 });
 
 app.delete('/api/appointments/:id', requireAuth, (req, res) => {
-  const a = db.getAppointmentById(req.params.id);
+  const id = validateId(req.params.id);
+  if (!id) return res.status(400).json({ error: 'ID inválido' });
+  const a = db.getAppointmentById(id);
   if (!a || a.business_id !== req.session.businessId) return res.status(404).json({ error: 'No encontrado' });
-  db.deleteAppointment(req.params.id);
+  db.deleteAppointment(id, req.session.businessId);
   res.json({ success: true });
 });
 
 // Sales
 app.get('/api/sales', requireAuth, (req, res) => {
   const { date } = req.query;
+  if (date && !validateDate(date)) return res.status(400).json({ error: 'Fecha inválida' });
   res.json(db.getSales(req.session.businessId, date || null));
 });
 
 app.post('/api/sales', requireAuth, (req, res) => {
   const { customer_id, service_id, amount, payment_method, notes, date } = req.body;
-  if (!amount) return res.status(400).json({ error: 'Monto requerido' });
-  const id = db.createSale({ business_id: req.session.businessId, customer_id, service_id, amount, payment_method, notes, date });
+  if (!validatePositiveNumber(amount)) return res.status(400).json({ error: 'Monto inválido' });
+  if (!validateDate(date)) return res.status(400).json({ error: 'Fecha inválida' });
+  const id = db.createSale({ business_id: req.session.businessId, customer_id: customer_id ? parseInt(customer_id, 10) : null, service_id: service_id ? parseInt(service_id, 10) : null, amount, payment_method: sanitizeString(payment_method, 50), notes: sanitizeString(notes, 1000), date });
   res.json({ success: true, id });
 });
 
 app.delete('/api/sales/:id', requireAuth, (req, res) => {
-  db.deleteSale(req.params.id);
+  const id = validateId(req.params.id);
+  if (!id) return res.status(400).json({ error: 'ID inválido' });
+  const s = db.getSaleById(id, req.session.businessId);
+  if (!s) return res.status(404).json({ error: 'No encontrado' });
+  db.deleteSale(id, req.session.businessId);
   res.json({ success: true });
 });
 
 // Master API (for CRM)
 app.post('/api/businesses', requireMasterKey, (req, res) => {
   const { name, contact, phone, email, password } = req.body;
-  if (!name || !email || !password) {
+  const cleanName = sanitizeString(name, 100);
+  const cleanEmail = sanitizeString(email, 100).toLowerCase();
+  const cleanContact = sanitizeString(contact, 100);
+  const cleanPhone = sanitizeString(phone, 50);
+  if (!cleanName || !cleanEmail || !password) {
     return res.status(400).json({ error: 'Nombre, email y contraseña requeridos' });
   }
-  const existing = db.getBusinessByEmail(email);
+  if (!validateEmail(cleanEmail)) return res.status(400).json({ error: 'Email inválido' });
+  if (password.length < 6) return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' });
+  const existing = db.getBusinessByEmail(cleanEmail);
   if (existing) return res.status(400).json({ error: 'Ya existe un negocio con ese email' });
-  const id = db.createBusiness({ name, contact, phone, email, password });
-  res.json({ success: true, id, email, password });
+  const id = db.createBusiness({ name: cleanName, contact: cleanContact, phone: cleanPhone, email: cleanEmail, password });
+  res.json({ success: true, id, email: cleanEmail });
 });
 
 app.put('/api/businesses/:id', requireMasterKey, (req, res) => {
-  const business = db.getBusinessById(parseInt(req.params.id));
+  const id = validateId(req.params.id);
+  if (!id) return res.status(400).json({ error: 'ID inválido' });
+  const business = db.getBusinessById(id);
   if (!business) return res.status(404).json({ error: 'Negocio no encontrado' });
   const { email, password } = req.body;
   if (email) {
-    const existing = db.getBusinessByEmail(email);
+    const cleanEmail = sanitizeString(email, 100).toLowerCase();
+    if (!validateEmail(cleanEmail)) return res.status(400).json({ error: 'Email inválido' });
+    const existing = db.getBusinessByEmail(cleanEmail);
     if (existing && existing.id !== business.id) return res.status(400).json({ error: 'El email ya está en uso' });
-    db.updateBusinessEmail(business.id, email);
+    db.updateBusinessEmail(business.id, cleanEmail);
   }
   if (password) {
+    if (password.length < 6) return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' });
     const hash = bcrypt.hashSync(password, 10);
     db.updateBusinessPassword(business.id, hash);
   }
   res.json({ success: true });
 });
 
-// Auto-login via link (GET with email & password in query params)
-app.get('/auto-login', (req, res) => {
-  const { email, password } = req.query;
-  if (!email || !password) {
-    return res.redirect('/?error=missing_params');
+app.put('/api/businesses/:id/info', requireAuth, (req, res) => {
+  if (req.session.businessId !== parseInt(req.params.id, 10)) {
+    return res.status(403).json({ error: 'No autorizado' });
   }
-  const business = db.getBusinessByEmail(email);
+  const { name, contact, phone, address, hours, instagram, human_phone } = req.body;
+  const data = {
+    name: name !== undefined ? sanitizeString(name, 100) : undefined,
+    contact: contact !== undefined ? sanitizeString(contact, 100) : undefined,
+    phone: phone !== undefined ? sanitizeString(phone, 50) : undefined,
+    address: address !== undefined ? sanitizeString(address, 200) : undefined,
+    hours: hours !== undefined ? sanitizeString(hours, 200) : undefined,
+    instagram: instagram !== undefined ? sanitizeString(instagram, 100) : undefined,
+    human_phone: human_phone !== undefined ? sanitizeString(human_phone, 50) : undefined
+  };
+  const filtered = Object.fromEntries(Object.entries(data).filter(([_, v]) => v !== undefined));
+  if (Object.keys(filtered).length === 0) return res.status(400).json({ error: 'No hay datos para actualizar' });
+  db.updateBusinessInfo(req.session.businessId, filtered);
+  res.json({ success: true });
+});
+
+// Auto-login via POST (secure, password in body, not in URL)
+app.post('/auto-login', (req, res) => {
+  const email = req.body.email;
+  const password = req.body.password;
+  if (!email || !password) {
+    return res.status(400).json({ error: 'Email y contraseña requeridos' });
+  }
+  const cleanEmail = email.trim().toLowerCase();
+  const business = db.getBusinessByEmail(cleanEmail);
   if (!business || !bcrypt.compareSync(password, business.password_hash)) {
-    return res.redirect('/?error=invalid_credentials');
+    return res.status(401).json({ error: 'Credenciales inválidas' });
   }
   req.session.businessId = business.id;
   req.session.businessName = business.name;
-  res.redirect('/');
+  // Si es una petición de navegador (form), redirigir; si es JSON, devolver JSON
+  if (req.headers['content-type'] && req.headers['content-type'].includes('application/x-www-form-urlencoded')) {
+    return res.redirect('/');
+  }
+  res.json({ success: true, redirect: '/' });
 });
 
 app.post('/api/businesses/setup', requireMasterKey, (req, res) => {
   const { name, contact, phone, email, password, employees, services } = req.body;
-  if (!name || !email || !password) {
+  const cleanName = sanitizeString(name, 100);
+  const cleanEmail = sanitizeString(email, 100).toLowerCase();
+  const cleanContact = sanitizeString(contact, 100);
+  const cleanPhone = sanitizeString(phone, 50);
+  if (!cleanName || !cleanEmail || !password) {
     return res.status(400).json({ error: 'Nombre, email y contraseña requeridos' });
   }
-  const existing = db.getBusinessByEmail(email);
+  if (!validateEmail(cleanEmail)) return res.status(400).json({ error: 'Email inválido' });
+  if (password.length < 6) return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' });
+  const existing = db.getBusinessByEmail(cleanEmail);
   if (existing) return res.status(400).json({ error: 'Ya existe un negocio con ese email' });
-  const id = db.createBusiness({ name, contact, phone, email, password });
-  if (employees && employees.length > 0) {
+  const id = db.createBusiness({ name: cleanName, contact: cleanContact, phone: cleanPhone, email: cleanEmail, password });
+  if (Array.isArray(employees) && employees.length > 0) {
     for (const e of employees) {
-      db.createEmployee({ business_id: id, name: e.name, phone: e.phone || '' });
+      const ename = sanitizeString(e.name, 100);
+      if (ename) db.createEmployee({ business_id: id, name: ename, phone: sanitizeString(e.phone, 50) || '' });
     }
   }
-  if (services && services.length > 0) {
+  if (Array.isArray(services) && services.length > 0) {
     for (const s of services) {
-      db.createService({ business_id: id, name: s.name, price: s.price || 0, duration: s.duration || 30 });
+      const sname = sanitizeString(s.name, 100);
+      if (sname && validatePositiveNumber(s.price)) {
+        const dur = parseInt(s.duration, 10);
+        db.createService({ business_id: id, name: sname, price: s.price, duration: Number.isInteger(dur) && dur > 0 ? dur : 30 });
+      }
     }
   }
-  res.json({ success: true, id, email, password, employeesCount: (employees || []).length, servicesCount: (services || []).length });
+  res.json({ success: true, id, email: cleanEmail, employeesCount: (employees || []).length, servicesCount: (services || []).length });
 });
 
 // WhatsApp API
@@ -341,16 +528,27 @@ app.get('/api/whatsapp/conversations', requireAuth, (req, res) => {
 });
 
 app.get('/api/whatsapp/conversations/:id', requireAuth, (req, res) => {
-  const conv = db.prepare('SELECT * FROM wa_conversations WHERE id = ? AND business_id = ?').get(req.params.id, req.session.businessId);
-  if (!conv) return res.status(404).json({ error: 'No encontrada' });
+  const conv = getConversation(req, res);
+  if (!conv) return;
   const messages = db.getWAMessages(conv.id);
   res.json({ ...conv, messages });
 });
 
+function getConversation(req, res) {
+  const id = validateId(req.params.id);
+  if (!id) return null;
+  const conv = db.prepare('SELECT * FROM wa_conversations WHERE id = ? AND business_id = ?').get(id, req.session.businessId);
+  if (!conv) {
+    res.status(404).json({ error: 'No encontrada' });
+    return null;
+  }
+  return conv;
+}
+
 app.post('/api/whatsapp/conversations/:id/messages', requireAuth, async (req, res) => {
-  const conv = db.prepare('SELECT * FROM wa_conversations WHERE id = ? AND business_id = ?').get(req.params.id, req.session.businessId);
-  if (!conv) return res.status(404).json({ error: 'No encontrada' });
-  const { content } = req.body;
+  const conv = getConversation(req, res);
+  if (!conv) return;
+  const content = sanitizeString(req.body.content, 2000);
   if (!content) return res.status(400).json({ error: 'Contenido requerido' });
   db.insertWAMessage(conv.id, 'human', content);
   const jid = conv.remote_jid || (conv.phone.includes('@') ? conv.phone : conv.phone + '@s.whatsapp.net');
@@ -368,8 +566,8 @@ app.post('/api/whatsapp/conversations/:id/messages', requireAuth, async (req, re
 });
 
 app.post('/api/whatsapp/conversations/:id/mode', requireAuth, (req, res) => {
-  const conv = db.prepare('SELECT * FROM wa_conversations WHERE id = ? AND business_id = ?').get(req.params.id, req.session.businessId);
-  if (!conv) return res.status(404).json({ error: 'No encontrada' });
+  const conv = getConversation(req, res);
+  if (!conv) return;
   const { mode } = req.body;
   if (!mode || !['AI', 'HUMAN'].includes(mode)) return res.status(400).json({ error: 'Modo inválido' });
   db.setWAMode(conv.id, mode);
@@ -377,8 +575,8 @@ app.post('/api/whatsapp/conversations/:id/mode', requireAuth, (req, res) => {
 });
 
 app.delete('/api/whatsapp/conversations/:id', requireAuth, (req, res) => {
-  const conv = db.prepare('SELECT * FROM wa_conversations WHERE id = ? AND business_id = ?').get(req.params.id, req.session.businessId);
-  if (!conv) return res.status(404).json({ error: 'No encontrada' });
+  const conv = getConversation(req, res);
+  if (!conv) return;
   db.deleteWACoversation(conv.id);
   res.json({ success: true });
 });
@@ -394,9 +592,25 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Error interno del servidor' });
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`\n  Panel Cliente - Impulso Digital`);
   console.log(`  → http://localhost:${PORT}\n`);
   console.log(`  Iniciá sesión con las credenciales de tu negocio\n`);
   wa.initAllConnections();
 });
+
+function gracefulShutdown(signal) {
+  console.log(`[server] Recibido ${signal}, cerrando graceful...`);
+  wa.stopAllConnections();
+  server.close(() => {
+    console.log('[server] Servidor cerrado');
+    process.exit(0);
+  });
+  setTimeout(() => {
+    console.error('[server] Forzando cierre por timeout');
+    process.exit(1);
+  }, 10000);
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));

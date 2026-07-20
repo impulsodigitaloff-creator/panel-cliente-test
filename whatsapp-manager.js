@@ -256,6 +256,12 @@ async function callLLM(history, businessId, phone, pushName) {
 function createAppointmentFromAI(businessId, args, phone, pushName) {
   try {
     const biz = db.getBusinessById(businessId);
+    if (!args || !args.fecha || !args.hora || !args.nombre || !args.servicio) {
+      return { success: false, message: 'Faltan datos para agendar el turno' };
+    }
+    if (!validateDate(args.fecha) || !validateTime(args.hora)) {
+      return { success: false, message: 'Fecha u hora inválidas', args };
+    }
     // Validar horario de atención
     if (!isBusinessOpen(args.fecha, args.hora)) {
       const alternatives = getNextAvailableSlots(businessId, args.fecha, args.hora, 3);
@@ -275,7 +281,8 @@ function createAppointmentFromAI(businessId, args, phone, pushName) {
     // Buscar servicio por nombre (match parcial)
     let service = db.prepare('SELECT id FROM services WHERE business_id = ? AND name LIKE ?').get(businessId, '%' + args.servicio + '%');
     if (!service) {
-      service = db.prepare('SELECT id FROM services WHERE business_id = ? AND name LIKE ?').get(businessId, '%' + args.servicio.slice(0, 5) + '%');
+      const short = args.servicio.slice(0, 5);
+      service = db.prepare('SELECT id FROM services WHERE business_id = ? AND name LIKE ?').get(businessId, '%' + short + '%');
     }
     // Crear el turno
     db.prepare('INSERT INTO appointments (business_id, customer_id, date, time, status, notes, service_id) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
@@ -295,6 +302,16 @@ function createAppointmentFromAI(businessId, args, phone, pushName) {
     console.error('[bot] Error creando turno:', e.message);
     return { success: false, message: e.message, args };
   }
+}
+
+function validateDate(date) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(date) && !isNaN(Date.parse(date));
+}
+
+function validateTime(time) {
+  if (!/^\d{2}:\d{2}$/.test(time)) return false;
+  const [h, m] = time.split(':').map(Number);
+  return h >= 0 && h <= 23 && m >= 0 && m <= 59;
 }
 
 async function startConnection(businessId) {
@@ -348,6 +365,7 @@ async function startConnection(businessId) {
         console.log(`[bot] Negocio ${businessId} deslogueado`);
       } else {
         db.upsertWhatsAppConnection({ business_id: businessId, status: 'connecting' });
+        if (conn.reconnectTimer) clearTimeout(conn.reconnectTimer);
         conn.reconnectTimer = setTimeout(() => startConnection(businessId), code === 440 ? 15000 : 5000);
         connections.set(businessId, conn);
       }
@@ -360,51 +378,78 @@ async function startConnection(businessId) {
     console.log(`[bot] messages.upsert: type=${type}, count=${messages.length}`);
     if (type !== 'notify') return;
     for (const msg of messages) {
-      console.log(`[bot] msg: fromMe=${msg.key.fromMe}, jid=${msg.key.remoteJid}, msgType=${msg.message ? Object.keys(msg.message).join(',') : 'EMPTY'}`);
-      console.log(`[bot] msg raw: ${JSON.stringify(msg.message).slice(0,300)}`);
-      if (msg.key.fromMe) continue;
-      if (msg.key.remoteJid?.includes('@g.us')) continue;
-      const isWA = msg.key.remoteJid?.includes('@s.whatsapp.net') || msg.key.remoteJid?.includes('@lid');
-      if (!isWA) continue;
-      const phone = msg.key.remoteJid.split('@')[0];
-      const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
-      if (!text) continue;
-      const pushName = msg.pushName || '';
-      const conv = db.getOrCreateWACoversation(businessId, phone, pushName, msg.key.remoteJid);
-      db.insertWAMessage(conv.id, 'user', text);
-      console.log(`[bot] ← ${phone}: ${text.slice(0, 60)}`);
-      if (conv.mode === 'HUMAN') continue;
-      const history = db.getRecentWAHistory(conv.id, 20);
-      let reply = await callLLM(history, businessId, phone, pushName);
+      try {
+        console.log(`[bot] msg: fromMe=${msg.key.fromMe}, jid=${msg.key.remoteJid}, msgType=${msg.message ? Object.keys(msg.message).join(',') : 'EMPTY'}`);
+        console.log(`[bot] msg raw: ${JSON.stringify(msg.message).slice(0,300)}`);
+        if (msg.key.fromMe) continue;
+        if (msg.key.remoteJid?.includes('@g.us')) continue;
+        const isWA = msg.key.remoteJid?.includes('@s.whatsapp.net') || msg.key.remoteJid?.includes('@lid');
+        if (!isWA) continue;
+        const phone = msg.key.remoteJid.split('@')[0];
+        const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
+        if (!text) continue;
+        const pushName = msg.pushName || '';
+        const conv = db.getOrCreateWACoversation(businessId, phone, pushName, msg.key.remoteJid);
+        db.insertWAMessage(conv.id, 'user', text);
+        console.log(`[bot] ← ${phone}: ${text.slice(0, 60)}`);
+        if (conv.mode === 'HUMAN') continue;
+        const history = db.getRecentWAHistory(conv.id, 20);
+        let reply = await callLLM(history, businessId, phone, pushName);
 
-      // Detectar y ejecutar agendado
-      const agendaMatch = reply.match(/\[AGENDAR\s+([^\]]+)\]/);
-      if (agendaMatch) {
-        const args = Object.fromEntries(agendaMatch[1].trim().split(/\s+/).map(p => p.split('=')));
-        if (args.nombre && args.fecha && args.hora && args.servicio) {
-          const result = createAppointmentFromAI(businessId, args, phone, pushName);
-          if (result.success && result.confirmationText) {
-            reply = result.confirmationText;
-          } else if (result.alternatives) {
-            reply = formatAlternatives(result.args || args, result.alternatives);
-          } else {
-            reply = reply.replace(agendaMatch[0], '').trim() + ' (Perdón, hubo un error al guardar el turno. Te llamamos para confirmar 🙏)';
+        // Detectar y ejecutar agendado
+        const agendaMatch = parseAgendarTag(reply);
+        if (agendaMatch) {
+          const args = agendaMatch;
+          if (args.nombre && args.fecha && args.hora && args.servicio) {
+            const result = createAppointmentFromAI(businessId, args, phone, pushName);
+            if (result.success && result.confirmationText) {
+              reply = result.confirmationText;
+            } else if (result.alternatives) {
+              reply = formatAlternatives(result.args || args, result.alternatives);
+            } else {
+              reply = reply.replace(agendaMatch.original, '').trim() + ' (Perdón, hubo un error al guardar el turno. Te llamamos para confirmar 🙏)';
+            }
           }
         }
-      }
 
-      db.insertWAMessage(conv.id, 'assistant', reply);
-      try {
-        await sock.sendMessage(msg.key.remoteJid, { text: reply });
-        console.log(`[bot] → ${phone}: ${reply.slice(0, 60)}`);
+        db.insertWAMessage(conv.id, 'assistant', reply);
+        try {
+          await sock.sendMessage(msg.key.remoteJid, { text: reply });
+          console.log(`[bot] → ${phone}: ${reply.slice(0, 60)}`);
+        } catch (err) {
+          console.error(`[bot] Error enviando a ${phone}:`, err.message);
+          db.enqueueWAOutbox(conv.id, businessId, msg.key.remoteJid, reply);
+        }
       } catch (err) {
-        console.error(`[bot] Error enviando a ${phone}:`, err.message);
-        db.enqueueWAOutbox(conv.id, businessId, msg.key.remoteJid, reply);
+        console.error(`[bot] Error procesando mensaje:`, err.message);
       }
     }
   });
 
   return sock;
+}
+
+function parseAgendarTag(text) {
+  const match = text.match(/\[AGENDAR\s+([^\]]+)\]/);
+  if (!match) return null;
+  const inner = match[1].trim();
+  const keys = ['nombre', 'fecha', 'hora', 'servicio'];
+  const result = { original: match[0] };
+  let remaining = inner;
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    const nextKey = keys[i + 1];
+    const regex = nextKey
+      ? new RegExp(`${key}=(.*?)(?=\\s+${nextKey}=)`)
+      : new RegExp(`${key}=(.*)`);
+    const m = remaining.match(regex);
+    if (m) {
+      result[key] = m[1].trim();
+      remaining = remaining.replace(m[0], '').trim();
+    }
+  }
+  if (!result.nombre || !result.fecha || !result.hora || !result.servicio) return null;
+  return result;
 }
 
 async function startPairingConnection(businessId, phoneNumber) {
@@ -469,6 +514,7 @@ async function startPairingConnection(businessId, phoneNumber) {
         console.log(`[bot] Negocio ${businessId} deslogueado por pairing`);
       } else {
         db.upsertWhatsAppConnection({ business_id: businessId, status: 'connecting' });
+        if (conn.reconnectTimer) clearTimeout(conn.reconnectTimer);
         conn.reconnectTimer = setTimeout(() => startPairingConnection(businessId), code === 440 ? 15000 : 5000);
         connections.set(businessId, conn);
       }
@@ -480,44 +526,48 @@ async function startPairingConnection(businessId, phoneNumber) {
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
     for (const msg of messages) {
-      if (msg.key.fromMe) continue;
-      if (msg.key.remoteJid?.includes('@g.us')) continue;
-      const isWA = msg.key.remoteJid?.includes('@s.whatsapp.net') || msg.key.remoteJid?.includes('@lid');
-      if (!isWA) continue;
-      const phone = msg.key.remoteJid.split('@')[0];
-      const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
-      if (!text) continue;
-      const pushName = msg.pushName || '';
-      const conv = db.getOrCreateWACoversation(businessId, phone, pushName, msg.key.remoteJid);
-      db.insertWAMessage(conv.id, 'user', text);
-      console.log(`[bot] ← ${phone}: ${text.slice(0, 60)}`);
-      if (conv.mode === 'HUMAN') continue;
-      const history = db.getRecentWAHistory(conv.id, 20);
-      let reply = await callLLM(history, businessId, phone, pushName);
+      try {
+        if (msg.key.fromMe) continue;
+        if (msg.key.remoteJid?.includes('@g.us')) continue;
+        const isWA = msg.key.remoteJid?.includes('@s.whatsapp.net') || msg.key.remoteJid?.includes('@lid');
+        if (!isWA) continue;
+        const phone = msg.key.remoteJid.split('@')[0];
+        const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
+        if (!text) continue;
+        const pushName = msg.pushName || '';
+        const conv = db.getOrCreateWACoversation(businessId, phone, pushName, msg.key.remoteJid);
+        db.insertWAMessage(conv.id, 'user', text);
+        console.log(`[bot] ← ${phone}: ${text.slice(0, 60)}`);
+        if (conv.mode === 'HUMAN') continue;
+        const history = db.getRecentWAHistory(conv.id, 20);
+        let reply = await callLLM(history, businessId, phone, pushName);
 
-      // Detectar y ejecutar agendado
-      const agendaMatch = reply.match(/\[AGENDAR\s+([^\]]+)\]/);
-      if (agendaMatch) {
-        const args = Object.fromEntries(agendaMatch[1].trim().split(/\s+/).map(p => p.split('=')));
-        if (args.nombre && args.fecha && args.hora && args.servicio) {
-          const result = createAppointmentFromAI(businessId, args, phone, pushName);
-          if (result.success && result.confirmationText) {
-            reply = result.confirmationText;
-          } else if (result.alternatives) {
-            reply = formatAlternatives(result.args || args, result.alternatives);
-          } else {
-            reply = reply.replace(agendaMatch[0], '').trim() + ' (Perdón, hubo un error al guardar el turno. Te llamamos para confirmar 🙏)';
+        // Detectar y ejecutar agendado
+        const agendaMatch = parseAgendarTag(reply);
+        if (agendaMatch) {
+          const args = agendaMatch;
+          if (args.nombre && args.fecha && args.hora && args.servicio) {
+            const result = createAppointmentFromAI(businessId, args, phone, pushName);
+            if (result.success && result.confirmationText) {
+              reply = result.confirmationText;
+            } else if (result.alternatives) {
+              reply = formatAlternatives(result.args || args, result.alternatives);
+            } else {
+              reply = reply.replace(agendaMatch.original, '').trim() + ' (Perdón, hubo un error al guardar el turno. Te llamamos para confirmar 🙏)';
+            }
           }
         }
-      }
 
-      db.insertWAMessage(conv.id, 'assistant', reply);
-      try {
-        await conn.sock.sendMessage(msg.key.remoteJid, { text: reply });
-        console.log(`[bot] → ${phone}: ${reply.slice(0, 60)}`);
+        db.insertWAMessage(conv.id, 'assistant', reply);
+        try {
+          await conn.sock.sendMessage(msg.key.remoteJid, { text: reply });
+          console.log(`[bot] → ${phone}: ${reply.slice(0, 60)}`);
+        } catch (err) {
+          console.error(`[bot] Error enviando a ${phone}:`, err.message);
+          db.enqueueWAOutbox(conv.id, businessId, msg.key.remoteJid, reply);
+        }
       } catch (err) {
-        console.error(`[bot] Error enviando a ${phone}:`, err.message);
-        db.enqueueWAOutbox(conv.id, businessId, msg.key.remoteJid, reply);
+        console.error(`[bot] Error procesando mensaje:`, err.message);
       }
     }
   });
@@ -529,10 +579,22 @@ function stopConnection(businessId) {
   if (connections.has(businessId)) {
     const conn = connections.get(businessId);
     if (conn.reconnectTimer) clearTimeout(conn.reconnectTimer);
+    conn.reconnectTimer = null;
     try { conn.sock.end(undefined); } catch (e) {}
     connections.delete(businessId);
   }
   db.upsertWhatsAppConnection({ business_id: businessId, status: 'disconnected', qr_string: '', phone: '' });
+}
+
+function stopAllConnections() {
+  for (const [businessId, conn] of connections.entries()) {
+    if (conn.reconnectTimer) clearTimeout(conn.reconnectTimer);
+    conn.reconnectTimer = null;
+    try { conn.sock.end(undefined); } catch (e) {}
+    connections.delete(businessId);
+  }
+  if (outboxInterval) clearInterval(outboxInterval);
+  if (reminderInterval) clearInterval(reminderInterval);
 }
 
 async function processOutbox() {
@@ -555,13 +617,15 @@ function getConnection(businessId) {
   return connections.get(businessId) || null;
 }
 
-// Outbox processor every 2s
-setInterval(processOutbox, 2000);
+let outboxInterval = setInterval(processOutbox, 2000);
 
 // Reminder processor every 60s - manda recordatorio al negocio 1h antes del turno
-function getCustomerJid(customerPhone, customerId) {
-  // Si el cliente tiene una conversación de WA, usar ese remote_jid
-  if (customerId) {
+function getCustomerJid(customerPhone, customerId, businessId) {
+  // Si el cliente tiene una conversación de WA del mismo negocio, usar ese remote_jid
+  if (customerId && businessId) {
+    const conv = db.prepare('SELECT remote_jid FROM wa_conversations WHERE business_id = ? AND phone = ? ORDER BY id DESC LIMIT 1').get(businessId, customerPhone);
+    if (conv && conv.remote_jid) return conv.remote_jid;
+  } else if (customerId) {
     const conv = db.prepare('SELECT remote_jid FROM wa_conversations WHERE phone = ? ORDER BY id DESC LIMIT 1').get(customerPhone);
     if (conv && conv.remote_jid) return conv.remote_jid;
   }
@@ -572,19 +636,42 @@ function getCustomerJid(customerPhone, customerId) {
   return `${clean}@s.whatsapp.net`;
 }
 
+const reminderLocks = new Set();
+
 async function processReminders() {
   try {
-    const Database = require('better-sqlite3');
-    const path = require('path');
-    const d = new Database(process.env.DB_PATH || path.join(__dirname, 'data', 'panelcliente.db'));
+    const d = db;
     const businesses = d.prepare('SELECT id, name, phone FROM businesses WHERE active = 1').all();
     for (const biz of businesses) {
       const conn = connections.get(biz.id);
       if (!conn) continue;
-
-      // Confirmación a clientes y al negocio
       const mapsLink = 'https://maps.google.com/?q=Mendoza+Sur+340+J5402GUH+San+Juan+Argentina';
       const address = biz.address || 'Mendoza Sur 340, J5402GUH, San Juan, Argentina';
+      const bizJid = biz.phone.includes('@') ? biz.phone : (biz.phone ? biz.phone + '@s.whatsapp.net' : null);
+
+      async function sendReminder(appt, type, clientMsg, bizMsg) {
+        if (reminderLocks.has(appt.id)) return;
+        reminderLocks.add(appt.id);
+        try {
+        const jid = getCustomerJid(appt.customer_phone, appt.customer_id, biz.id);
+        if (jid && clientMsg) {
+            try {
+              await conn.sock.sendMessage(jid, { text: clientMsg });
+              console.log(`[reminder] ${type} turno ${appt.id} enviado a cliente`);
+            } catch (e) { console.error(`[reminder] Error ${type} cliente:`, e.message); }
+          }
+          if (bizJid && bizMsg) {
+            try {
+              await conn.sock.sendMessage(bizJid, { text: bizMsg });
+              console.log(`[reminder] ${type} turno ${appt.id} enviado a negocio`);
+            } catch (e) { console.error(`[reminder] Error ${type} negocio:`, e.message); }
+          }
+        } finally {
+          reminderLocks.delete(appt.id);
+        }
+      }
+
+      // Confirmación a clientes y al negocio
       const confirmations = d.prepare(`
         SELECT a.*, c.name as customer_name, c.phone as customer_phone,
                s.name as service_name, e.name as employee_name
@@ -595,27 +682,13 @@ async function processReminders() {
         WHERE a.business_id = ? AND a.status IN ('pending','confirmed') AND a.customer_confirmation_sent = 0
       `).all(biz.id);
       for (const appt of confirmations) {
-        const jid = getCustomerJid(appt.customer_phone, appt.customer_id);
-        if (jid) {
-          const msg = `✅ ¡Hola ${appt.customer_name || ''}! Tu turno quedó confirmado:\n\n✂️ ${appt.service_name || 'Servicio'}\n🗓️ ${appt.date}\n🕐 ${appt.time}${appt.employee_name ? '\n💅 ' + appt.employee_name : ''}\n📍 ${address}\n🌎 ${mapsLink}\n\nSi necesitás cancelar o reprogramar, respondé por WhatsApp y te ayudamos. 🙌\n\nNos vemos en ${biz.name} 😊`;
-          try {
-            await conn.sock.sendMessage(jid, { text: msg });
-            console.log(`[reminder] Confirmación turno ${appt.id} enviada a cliente`);
-          } catch (e) { console.error('[reminder] Error confirmación cliente:', e.message); }
-        }
-        // Confirmación al negocio
-        const bizJid = biz.phone.includes('@') ? biz.phone : (biz.phone ? biz.phone + '@s.whatsapp.net' : null);
-        if (bizJid) {
-          const msgBiz = `✅ Nuevo turno agendado\n\n👤 ${appt.customer_name || 'Cliente'}\n✂️ ${appt.service_name || 'Servicio'}\n🗓️ ${appt.date}\n🕐 ${appt.time}${appt.employee_name ? '\n💅 ' + appt.employee_name : ''}\n📞 ${appt.customer_phone || 'sin teléfono'}`;
-          try {
-            await conn.sock.sendMessage(bizJid, { text: msgBiz });
-            console.log(`[reminder] Confirmación turno ${appt.id} enviada a negocio`);
-          } catch (e) { console.error('[reminder] Error confirmación negocio:', e.message); }
-        }
+        const clientMsg = `✅ ¡Hola ${appt.customer_name || ''}! Tu turno quedó confirmado:\n\n✂️ ${appt.service_name || 'Servicio'}\n🗓️ ${appt.date}\n🕐 ${appt.time}${appt.employee_name ? '\n💅 ' + appt.employee_name : ''}\n📍 ${address}\n🌎 ${mapsLink}\n\nSi necesitás cancelar o reprogramar, respondé por WhatsApp y te ayudamos. 🙌\n\nNos vemos en ${biz.name} 😊`;
+        const bizMsg = `✅ Nuevo turno agendado\n\n👤 ${appt.customer_name || 'Cliente'}\n✂️ ${appt.service_name || 'Servicio'}\n🗓️ ${appt.date}\n🕐 ${appt.time}${appt.employee_name ? '\n💅 ' + appt.employee_name : ''}\n📞 ${appt.customer_phone || 'sin teléfono'}`;
+        await sendReminder(appt, 'confirmación', clientMsg, bizMsg);
         d.prepare('UPDATE appointments SET customer_confirmation_sent = 1 WHERE id = ?').run(appt.id);
       }
 
-      // Recordatorio 1 día antes al cliente y al negocio
+      // Recordatorio 1 día antes
       const reminders1d = d.prepare(`
         SELECT a.*, c.name as customer_name, c.phone as customer_phone,
                s.name as service_name, e.name as employee_name
@@ -628,26 +701,13 @@ async function processReminders() {
           AND a.date = date('now','-3 hours','+1 day')
       `).all(biz.id);
       for (const appt of reminders1d) {
-        const jid = getCustomerJid(appt.customer_phone, appt.customer_id);
-        if (jid) {
-          const msg = `📅 Recordatorio de turno\n\nHola ${appt.customer_name || ''}, te recordamos tu turno de mañana:\n\n✂️ ${appt.service_name || 'Servicio'}\n🕐 ${appt.time}${appt.employee_name ? '\n💅 ' + appt.employee_name : ''}\n📍 ${address}\n🌎 ${mapsLink}\n\nSi necesitás cancelar o reprogramar, respondé por WhatsApp. Te esperamos 😊`;
-          try {
-            await conn.sock.sendMessage(jid, { text: msg });
-            console.log(`[reminder] 1 día turno ${appt.id} enviado a cliente`);
-          } catch (e) { console.error('[reminder] Error 1d cliente:', e.message); }
-        }
-        const bizJid = biz.phone.includes('@') ? biz.phone : (biz.phone ? biz.phone + '@s.whatsapp.net' : null);
-        if (bizJid) {
-          const msgBiz = `📅 Recordatorio de turno mañana\n\n👤 ${appt.customer_name || 'Cliente'}\n✂️ ${appt.service_name || 'Servicio'}\n🗓️ ${appt.date}\n🕐 ${appt.time}${appt.employee_name ? '\n💅 ' + appt.employee_name : ''}\n📞 ${appt.customer_phone || 'sin teléfono'}`;
-          try {
-            await conn.sock.sendMessage(bizJid, { text: msgBiz });
-            console.log(`[reminder] 1 día turno ${appt.id} enviado a negocio`);
-          } catch (e) { console.error('[reminder] Error 1d negocio:', e.message); }
-        }
+        const clientMsg = `📅 Recordatorio de turno\n\nHola ${appt.customer_name || ''}, te recordamos tu turno de mañana:\n\n✂️ ${appt.service_name || 'Servicio'}\n🕐 ${appt.time}${appt.employee_name ? '\n💅 ' + appt.employee_name : ''}\n📍 ${address}\n🌎 ${mapsLink}\n\nSi necesitás cancelar o reprogramar, respondé por WhatsApp. Te esperamos 😊`;
+        const bizMsg = `📅 Recordatorio de turno mañana\n\n👤 ${appt.customer_name || 'Cliente'}\n✂️ ${appt.service_name || 'Servicio'}\n🗓️ ${appt.date}\n🕐 ${appt.time}${appt.employee_name ? '\n💅 ' + appt.employee_name : ''}\n📞 ${appt.customer_phone || 'sin teléfono'}`;
+        await sendReminder(appt, '1d', clientMsg, bizMsg);
         d.prepare('UPDATE appointments SET customer_reminder_1d_sent = 1 WHERE id = ?').run(appt.id);
       }
 
-      // Recordatorio 1 hora antes al cliente y al negocio
+      // Recordatorio 1 hora antes
       const reminders1h = d.prepare(`
         SELECT a.*, c.name as customer_name, c.phone as customer_phone,
                s.name as service_name, e.name as employee_name
@@ -662,41 +722,22 @@ async function processReminders() {
           AND a.time > time('now','-3 hours')
       `).all(biz.id);
       for (const appt of reminders1h) {
-        const jid = getCustomerJid(appt.customer_phone, appt.customer_id);
-        if (jid) {
-          const msg = `🔔 ¡Falta 1 hora!\n\nHola ${appt.customer_name || ''}, tu turno es hoy a las ${appt.time}:\n\n✂️ ${appt.service_name || 'Servicio'}${appt.employee_name ? '\n💅 ' + appt.employee_name : ''}\n📍 ${address}\n🌎 ${mapsLink}\n\nTe esperamos 🙌`;
-          try {
-            await conn.sock.sendMessage(jid, { text: msg });
-            console.log(`[reminder] 1h turno ${appt.id} enviado a cliente`);
-          } catch (e) { console.error('[reminder] Error 1h cliente:', e.message); }
-        }
-        const bizJid = biz.phone.includes('@') ? biz.phone : (biz.phone ? biz.phone + '@s.whatsapp.net' : null);
-        if (bizJid) {
-          const msgBiz = `🔔 ¡Falta 1 hora!\n\n👤 ${appt.customer_name || 'Cliente'}\n✂️ ${appt.service_name || 'Servicio'}\n🗓️ ${appt.date}\n🕐 ${appt.time}${appt.employee_name ? '\n💅 ' + appt.employee_name : ''}\n📞 ${appt.customer_phone || 'sin teléfono'}`;
-          try {
-            await conn.sock.sendMessage(bizJid, { text: msgBiz });
-            console.log(`[reminder] 1h turno ${appt.id} enviado a negocio`);
-          } catch (e) { console.error('[reminder] Error 1h negocio:', e.message); }
-        }
+        const clientMsg = `🔔 ¡Falta 1 hora!\n\nHola ${appt.customer_name || ''}, tu turno es hoy a las ${appt.time}:\n\n✂️ ${appt.service_name || 'Servicio'}${appt.employee_name ? '\n💅 ' + appt.employee_name : ''}\n📍 ${address}\n🌎 ${mapsLink}\n\nTe esperamos 🙌`;
+        const bizMsg = `🔔 ¡Falta 1 hora!\n\n👤 ${appt.customer_name || 'Cliente'}\n✂️ ${appt.service_name || 'Servicio'}\n🗓️ ${appt.date}\n🕐 ${appt.time}${appt.employee_name ? '\n💅 ' + appt.employee_name : ''}\n📞 ${appt.customer_phone || 'sin teléfono'}`;
+        await sendReminder(appt, '1h', clientMsg, bizMsg);
         d.prepare('UPDATE appointments SET customer_reminder_1h_sent = 1, reminder_sent = 1 WHERE id = ?').run(appt.id);
       }
     }
-    d.close();
   } catch (e) {
     console.error('[reminder] Error general:', e.message);
   }
 }
-setInterval(processReminders, 60000);
+let reminderInterval = setInterval(processReminders, 60000);
 
 // Auto-restart connections on startup
 function initAllConnections() {
   try {
-    const { getWhatsAppConnection } = require('./database');
-    const Database = require('better-sqlite3');
-    const path = require('path');
-    const d = new Database(process.env.DB_PATH || path.join(__dirname, 'data', 'panelcliente.db'));
-    const all = d.prepare('SELECT * FROM whatsapp_connections WHERE status = ? OR status = ?').all('connected', 'connecting');
-    d.close();
+    const all = db.prepare('SELECT * FROM whatsapp_connections WHERE status = ? OR status = ?').all('connected', 'connecting');
     for (const c of all) {
       console.log(`[bot] Restaurando conexión negocio ${c.business_id}...`);
       startConnection(c.business_id);
@@ -706,4 +747,4 @@ function initAllConnections() {
   }
 }
 
-module.exports = { startConnection, startPairingConnection, stopConnection, getConnection, initAllConnections };
+module.exports = { startConnection, startPairingConnection, stopConnection, stopAllConnections, getConnection, initAllConnections };

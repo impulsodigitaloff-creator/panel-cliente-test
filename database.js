@@ -139,18 +139,35 @@ db.exec(`
     FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE
   );
 
+  CREATE INDEX IF NOT EXISTS idx_appointments_business_date_time ON appointments(business_id, date, time);
+  CREATE INDEX IF NOT EXISTS idx_appointments_business_status ON appointments(business_id, status);
+  CREATE INDEX IF NOT EXISTS idx_appointments_customer ON appointments(customer_id);
+  CREATE INDEX IF NOT EXISTS idx_customers_business_phone ON customers(business_id, phone);
+  CREATE INDEX IF NOT EXISTS idx_services_business ON services(business_id, active);
+  CREATE INDEX IF NOT EXISTS idx_employees_business ON employees(business_id, active);
+  CREATE INDEX IF NOT EXISTS idx_sales_business_date ON sales(business_id, date);
+  CREATE INDEX IF NOT EXISTS idx_wa_messages_conversation ON wa_messages(conversation_id);
+  CREATE INDEX IF NOT EXISTS idx_wa_conversations_business_phone ON wa_conversations(business_id, phone);
+
 `);
 
 // Migración: agregar columnas de info del negocio si no existen
-try { db.exec('ALTER TABLE businesses ADD COLUMN address TEXT DEFAULT \'\''); } catch (e) {}
-try { db.exec('ALTER TABLE businesses ADD COLUMN hours TEXT DEFAULT \'\''); } catch (e) {}
-try { db.exec('ALTER TABLE businesses ADD COLUMN instagram TEXT DEFAULT \'\''); } catch (e) {}
-try { db.exec('ALTER TABLE businesses ADD COLUMN human_phone TEXT DEFAULT \'\''); } catch (e) {}
-try { db.exec('ALTER TABLE appointments ADD COLUMN reminder_sent INTEGER DEFAULT 0'); } catch (e) {}
-try { db.exec('ALTER TABLE appointments ADD COLUMN customer_confirmation_sent INTEGER DEFAULT 0'); } catch (e) {}
-try { db.exec('ALTER TABLE appointments ADD COLUMN customer_reminder_1d_sent INTEGER DEFAULT 0'); } catch (e) {}
-try { db.exec('ALTER TABLE appointments ADD COLUMN customer_reminder_1h_sent INTEGER DEFAULT 0'); } catch (e) {}
-try { db.exec('ALTER TABLE wa_conversations ADD COLUMN remote_jid TEXT DEFAULT \'\''); } catch (e) {}
+function runMigration(sql) {
+  try { db.exec(sql); } catch (e) {
+    if (!e.message.includes('duplicate column')) {
+      console.log('[db] Migración warning:', e.message);
+    }
+  }
+}
+runMigration('ALTER TABLE businesses ADD COLUMN address TEXT DEFAULT \'\'');
+runMigration('ALTER TABLE businesses ADD COLUMN hours TEXT DEFAULT \'\'');
+runMigration('ALTER TABLE businesses ADD COLUMN instagram TEXT DEFAULT \'\'');
+runMigration('ALTER TABLE businesses ADD COLUMN human_phone TEXT DEFAULT \'\'');
+runMigration('ALTER TABLE appointments ADD COLUMN reminder_sent INTEGER DEFAULT 0');
+runMigration('ALTER TABLE appointments ADD COLUMN customer_confirmation_sent INTEGER DEFAULT 0');
+runMigration('ALTER TABLE appointments ADD COLUMN customer_reminder_1d_sent INTEGER DEFAULT 0');
+runMigration('ALTER TABLE appointments ADD COLUMN customer_reminder_1h_sent INTEGER DEFAULT 0');
+runMigration('ALTER TABLE wa_conversations ADD COLUMN remote_jid TEXT DEFAULT \'\'');
 
 const businessCount = db.prepare('SELECT COUNT(*) as count FROM businesses').get();
 if (businessCount.count === 0) {
@@ -236,7 +253,7 @@ try {
     const newHash = bcrypt.hashSync('carolina2026', 10);
     db.prepare('UPDATE businesses SET password_hash=? WHERE id=?').run(newHash, caro.id);
     const biz = db.prepare('SELECT email FROM businesses WHERE id=?').get(caro.id);
-    console.log(`[db] Credenciales Carolina -> email: ${biz.email} | password: carolina2026`);
+    console.log(`[db] Credenciales Carolina configuradas (email: ${biz.email})`);
   }
 } catch (e) { console.log('[db] Migración Carolina skip:', e.message); }
 
@@ -257,8 +274,23 @@ const dbMethods = {
     const r = db.prepare('INSERT INTO businesses (name, contact, phone, email, password_hash) VALUES (?, ?, ?, ?, ?)').run(data.name, data.contact || '', data.phone || '', data.email, hash);
     return r.lastInsertRowid;
   },
-  getServiceById(id) {
+  getServiceById(id, businessId) {
+    if (businessId) {
+      return db.prepare('SELECT * FROM services WHERE id = ? AND business_id = ?').get(id, businessId);
+    }
     return db.prepare('SELECT * FROM services WHERE id = ?').get(id);
+  },
+  getEmployeeById(id, businessId) {
+    if (businessId) {
+      return db.prepare('SELECT * FROM employees WHERE id = ? AND business_id = ?').get(id, businessId);
+    }
+    return db.prepare('SELECT * FROM employees WHERE id = ?').get(id);
+  },
+  getSaleById(id, businessId) {
+    if (businessId) {
+      return db.prepare('SELECT * FROM sales WHERE id = ? AND business_id = ?').get(id, businessId);
+    }
+    return db.prepare('SELECT * FROM sales WHERE id = ?').get(id);
   },
   getBusinessByEmail(email) {
     return db.prepare('SELECT * FROM businesses WHERE email = ? AND active = 1').get(email);
@@ -271,6 +303,14 @@ const dbMethods = {
   },
   updateBusinessPassword(id, hash) {
     db.prepare('UPDATE businesses SET password_hash = ? WHERE id = ?').run(hash, id);
+  },
+  updateBusinessInfo(id, data) {
+    const allowedCols = ['name', 'contact', 'phone', 'address', 'hours', 'instagram', 'human_phone'];
+    const cols = Object.keys(data).filter(k => allowedCols.includes(k));
+    if (cols.length === 0) return;
+    const sets = cols.map(k => `${k}=?`).join(',');
+    const vals = cols.map(k => data[k]);
+    db.prepare(`UPDATE businesses SET ${sets} WHERE id=?`).run(...vals, id);
   },
 
   // Dashboard
@@ -464,35 +504,49 @@ const dbMethods = {
     db.prepare('UPDATE appointments SET customer_id=?, service_id=?, employee_id=?, date=?, time=?, status=?, notes=? WHERE id=?').run(data.customer_id, data.service_id, data.employee_id, data.date, data.time, data.status, data.notes, id);
   },
   updateAppointmentStatus(id, status) {
-    const old = db.prepare('SELECT * FROM appointments WHERE id = ?').get(id);
-    if (!old) return null;
-    db.prepare('UPDATE appointments SET status=? WHERE id=?').run(status, id);
-    // Auto-create sale when completed
-    if (status === 'completed' && !old.sale_id) {
-      const service = old.service_id ? this.getServiceById(old.service_id) : null;
-      const amount = service ? service.price : 0;
-      if (amount > 0) {
-        const saleId = this.createSale({
-          business_id: old.business_id,
-          customer_id: old.customer_id,
-          service_id: old.service_id,
-          amount,
-          payment_method: 'pending',
-          notes: 'Venta automática desde turno',
-          date: old.date
-        });
-        db.prepare('UPDATE appointments SET sale_id=? WHERE id=?').run(saleId, id);
-        return { saleCreated: true, saleId, amount };
+    const tx = db.transaction(() => {
+      const old = db.prepare('SELECT * FROM appointments WHERE id = ?').get(id);
+      if (!old) return { error: 'Turno no encontrado' };
+      db.prepare('UPDATE appointments SET status=? WHERE id=?').run(status, id);
+      // If completed, create sale
+      if (status === 'completed' && !old.sale_id) {
+        const service = old.service_id ? db.prepare('SELECT price FROM services WHERE id = ?').get(old.service_id) : null;
+        const amount = service ? service.price : 0;
+        if (amount > 0) {
+          const saleId = this.createSale({
+            business_id: old.business_id,
+            customer_id: old.customer_id,
+            service_id: old.service_id,
+            amount,
+            payment_method: 'pending',
+            notes: 'Venta automática desde turno',
+            date: old.date
+          });
+          db.prepare('UPDATE appointments SET sale_id=? WHERE id=?').run(saleId, id);
+          return { saleCreated: true, saleId, amount };
+        }
+        return { saleCreated: false, message: 'El turno no tiene servicio con precio asignado. Registrá la venta manualmente.' };
       }
-      return { saleCreated: false, message: 'El turno no tiene servicio con precio asignado. Registrá la venta manualmente.' };
+      // If un-completed, remove linked sale
+      if (status !== 'completed' && old.sale_id) {
+        this.deleteSale(old.sale_id, old.business_id);
+        db.prepare('UPDATE appointments SET sale_id=NULL WHERE id=?').run(id);
+        return { saleRemoved: true };
+      }
+      return null;
+    });
+    return tx();
+  },
+  deleteAppointment(id, businessId) {
+    const a = businessId
+      ? db.prepare('SELECT * FROM appointments WHERE id = ? AND business_id = ?').get(id, businessId)
+      : db.prepare('SELECT * FROM appointments WHERE id = ?').get(id);
+    if (!a) return false;
+    if (a.sale_id) {
+      this.deleteSale(a.sale_id, a.business_id);
     }
-    // If un-completed, remove linked sale
-    if (status !== 'completed' && old.sale_id) {
-      this.deleteSale(old.sale_id);
-      db.prepare('UPDATE appointments SET sale_id=NULL WHERE id=?').run(id);
-      return { saleRemoved: true };
-    }
-    return null;
+    db.prepare('DELETE FROM appointments WHERE id = ?').run(id);
+    return true;
   },
   deleteAppointment(id) {
     const a = db.prepare('SELECT * FROM appointments WHERE id = ?').get(id);
@@ -536,9 +590,14 @@ const dbMethods = {
     const r = db.prepare('INSERT INTO sales (business_id, customer_id, service_id, amount, payment_method, notes, date) VALUES (?, ?, ?, ?, ?, ?, ?)').run(data.business_id, data.customer_id, data.service_id, data.amount, data.payment_method, data.notes, data.date);
     return r.lastInsertRowid;
   },
-  deleteSale(id) {
+  deleteSale(id, businessId) {
+    const sale = businessId
+      ? db.prepare('SELECT * FROM sales WHERE id = ? AND business_id = ?').get(id, businessId)
+      : db.prepare('SELECT * FROM sales WHERE id = ?').get(id);
+    if (!sale) return false;
     db.prepare('UPDATE appointments SET sale_id=NULL WHERE sale_id=?').run(id);
     db.prepare('DELETE FROM sales WHERE id = ?').run(id);
+    return true;
   },
 
   // WhatsApp
@@ -546,13 +605,15 @@ const dbMethods = {
     return db.prepare('SELECT * FROM whatsapp_connections WHERE business_id = ?').get(businessId);
   },
   upsertWhatsAppConnection(data) {
+    const allowedCols = ['status', 'qr_string', 'phone', 'session_data'];
     const existing = db.prepare('SELECT id FROM whatsapp_connections WHERE business_id = ?').get(data.business_id);
     if (existing) {
-      const sets = Object.keys(data).filter(k => k !== 'business_id').map(k => `${k}=?`).join(',');
-      const vals = Object.keys(data).filter(k => k !== 'business_id').map(k => data[k]);
+      const keys = Object.keys(data).filter(k => k !== 'business_id' && allowedCols.includes(k));
+      const sets = keys.map(k => `${k}=?`).join(',');
+      const vals = keys.map(k => data[k]);
       db.prepare(`UPDATE whatsapp_connections SET ${sets}, updated_at=(datetime('now','-3 hours')) WHERE business_id=?`).run(...vals, data.business_id);
     } else {
-      const keys = Object.keys(data);
+      const keys = Object.keys(data).filter(k => allowedCols.includes(k) || k === 'business_id');
       const q = keys.map(() => '?').join(',');
       db.prepare(`INSERT INTO whatsapp_connections (${keys.join(',')}) VALUES (${q})`).run(...keys.map(k => data[k]));
     }

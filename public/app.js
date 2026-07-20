@@ -9,6 +9,16 @@ let state = {
   currentDate: new Date().toISOString().split('T')[0]
 };
 
+function escapeHtml(text) {
+  if (text === null || text === undefined) return '';
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 async function api(path, opts = {}) {
   const res = await fetch(path, {
     headers: { 'Content-Type': 'application/json', ...opts.headers },
@@ -165,10 +175,10 @@ async function renderDashboard() {
       apptsHtml = '<h3 style="font-size:14px; font-weight:600; margin-bottom:12px;">Turnos de hoy</h3>';
       pendingAppts.forEach(a => {
         apptsHtml += `<div class="appt-card" style="cursor:pointer;" onclick="showView('appointments')">
-          <div class="appt-time">${formatTime(a.time)}</div>
+          <div class="appt-time">${escapeHtml(formatTime(a.time))}</div>
           <div class="appt-info">
-            <div class="appt-customer">${a.customer_name}</div>
-            <div class="appt-detail">${a.service_name || ''} ${a.employee_name ? 'con ' + a.employee_name : ''}</div>
+            <div class="appt-customer">${escapeHtml(a.customer_name)}</div>
+            <div class="appt-detail">${escapeHtml(a.service_name || '')} ${a.employee_name ? 'con ' + escapeHtml(a.employee_name) : ''}</div>
           </div>
           <div>${statusBadge(a.status)}</div>
         </div>`;
@@ -213,7 +223,7 @@ async function renderDashboard() {
       ${apptsHtml}
     `;
   } catch (err) {
-    document.getElementById('main-content').innerHTML = `<div class="empty-state"><p>Error: ${err.message}</p></div>`;
+    document.getElementById('main-content').innerHTML = `<div class="empty-state"><p>Error: ${escapeHtml(err.message)}</p></div>`;
   }
 }
 
@@ -228,7 +238,7 @@ async function renderCustomers() {
     state.customers = await api('/api/customers');
     renderCustomersTable(el);
   } catch (err) {
-    el.innerHTML = `<div class="empty-state"><p>Error: ${err.message}</p></div>`;
+    el.innerHTML = `<div class="empty-state"><p>Error: ${escapeHtml(err.message)}</p></div>`;
   }
 }
 
@@ -243,12 +253,12 @@ function renderCustomersTable(el) {
     <tr>
       <td>
         <div class="info">
-          <span class="info-name">${c.name}</span>
-          <span class="info-sub">${c.phone || c.email || 'Sin contacto'}</span>
+          <span class="info-name">${escapeHtml(c.name)}</span>
+          <span class="info-sub">${escapeHtml(c.phone || c.email || 'Sin contacto')}</span>
         </div>
       </td>
-      <td>${c.phone || '—'}</td>
-      <td>${c.email || '—'}</td>
+      <td>${escapeHtml(c.phone || '—')}</td>
+      <td>${escapeHtml(c.email || '—')}</td>
       <td>
         <div style="display:flex;gap:4px;">
           <button class="btn btn-sm btn-secondary" onclick="openCustomerModal(${c.id})" title="Editar">✏️</button>
@@ -263,7 +273,7 @@ function renderCustomersTable(el) {
       <div class="section-actions" style="flex:1;">
         <div class="search-box" style="flex:1;max-width:320px;">
           <span class="search-icon">🔍</span>
-          <input type="text" id="customer-search" placeholder="Buscar clientes..." value="${customerSearch}" oninput="searchCustomers()">
+          <input type="text" id="customer-search" placeholder="Buscar clientes..." value="${escapeHtml(customerSearch)}" oninput="searchCustomers()">
         </div>
       </div>
     </div>
@@ -312,7 +322,7 @@ async function openCustomerModal(id) {
       if (c.appointments && c.appointments.length > 0) {
         apptHtml += c.appointments.map(a => `
           <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px;">
-            <span>${formatDate(a.date)} ${formatTime(a.time)} - ${a.service_name || 'Sin servicio'}</span>
+            <span>${escapeHtml(formatDate(a.date))} ${escapeHtml(formatTime(a.time))} - ${escapeHtml(a.service_name || 'Sin servicio')}</span>
             <span>${statusBadge(a.status)}</span>
           </div>
         `).join('');
@@ -324,8 +334,8 @@ async function openCustomerModal(id) {
       if (c.sales && c.sales.length > 0) {
         saleHtml += c.sales.map(s => `
           <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px;">
-            <span>${formatDate(s.date)} - ${s.service_name || 'Venta directa'}</span>
-            <span style="font-weight:600;">${formatCurrency(s.amount)}</span>
+            <span>${escapeHtml(formatDate(s.date))} - ${escapeHtml(s.service_name || 'Venta directa')}</span>
+            <span style="font-weight:600;">${escapeHtml(formatCurrency(s.amount))}</span>
           </div>
         `).join('');
       } else {
@@ -414,17 +424,17 @@ function renderAppointmentsList(el) {
 
   let cards;
   if (data.length === 0) {
-    cards = `<div class="empty-state"><div class="empty-icon">📅</div><h3>Sin turnos</h3><p>No hay turnos para ${formatDate(state.currentDate)}</p></div>`;
+    cards = `<div class="empty-state"><div class="empty-icon">📅</div><h3>Sin turnos</h3><p>No hay turnos para ${escapeHtml(formatDate(state.currentDate))}</p></div>`;
   } else {
     cards = data.map(a => `
       <div class="appt-card">
-        <div class="appt-time">${formatTime(a.time)}</div>
+        <div class="appt-time">${escapeHtml(formatTime(a.time))}</div>
         <div class="appt-info">
-          <div class="appt-customer">${a.customer_name}</div>
+          <div class="appt-customer">${escapeHtml(a.customer_name)}</div>
           <div class="appt-detail">
-            ${a.service_name || ''}
-            ${a.employee_name ? 'con ' + a.employee_name : ''}
-            ${a.notes ? '· ' + a.notes : ''}
+            ${escapeHtml(a.service_name || '')}
+            ${a.employee_name ? 'con ' + escapeHtml(a.employee_name) : ''}
+            ${a.notes ? '· ' + escapeHtml(a.notes) : ''}
             ${a.sale_id ? '<span style="color:var(--success);">· 💰 Venta registrada</span>' : ''}
           </div>
         </div>
@@ -495,15 +505,15 @@ async function openAppointmentModal(id) {
 
     const custSelect = document.getElementById('a-customer');
     custSelect.innerHTML = '<option value="">Seleccionar cliente...</option>' +
-      customers.map(c => `<option value="${c.id}">${c.name} ${c.phone ? '- ' + c.phone : ''}</option>`).join('');
+      customers.map(c => `<option value="${c.id}">${escapeHtml(c.name)} ${c.phone ? '- ' + escapeHtml(c.phone) : ''}</option>`).join('');
 
     const servSelect = document.getElementById('a-service');
     servSelect.innerHTML = '<option value="">Sin servicio</option>' +
-      services.map(s => `<option value="${s.id}">${s.name} - ${formatCurrency(s.price)}</option>`).join('');
+      services.map(s => `<option value="${s.id}">${escapeHtml(s.name)} - ${escapeHtml(formatCurrency(s.price))}</option>`).join('');
 
     const empSelect = document.getElementById('a-employee');
     empSelect.innerHTML = '<option value="">Sin empleado</option>' +
-      employees.map(e => `<option value="${e.id}">${e.name}</option>`).join('');
+      employees.map(e => `<option value="${e.id}">${escapeHtml(e.name)}</option>`).join('');
 
     if (id) {
       document.getElementById('modal-appt-title').textContent = 'Editar Turno';
@@ -574,7 +584,7 @@ async function quickAddCustomer() {
     const customers = await api('/api/customers');
     const select = document.getElementById('a-customer');
     select.innerHTML = '<option value="">Seleccionar cliente...</option>' +
-      customers.map(c => `<option value="${c.id}">${c.name} ${c.phone ? '- ' + c.phone : ''}</option>`).join('');
+      customers.map(c => `<option value="${c.id}">${escapeHtml(c.name)} ${c.phone ? '- ' + escapeHtml(c.phone) : ''}</option>`).join('');
     select.value = r.id;
   } catch (err) { toast(err.message, 'error'); }
 }
@@ -591,7 +601,7 @@ async function renderSales() {
     state.sales = sales;
     renderSalesList(el);
   } catch (err) {
-    el.innerHTML = `<div class="empty-state"><p>Error: ${err.message}</p></div>`;
+    el.innerHTML = `<div class="empty-state"><p>Error: ${escapeHtml(err.message)}</p></div>`;
   }
 }
 
@@ -602,11 +612,11 @@ function renderSalesList(el) {
 
   const rows = data.map(s => `
     <tr>
-      <td>${s.customer_name || '—'}</td>
-      <td>${s.service_name || '—'}</td>
-      <td><span style="font-weight:600;">${formatCurrency(s.amount)}</span></td>
-      <td><span style="text-transform:capitalize;">${s.payment_method || 'cash'}</span></td>
-      <td>${s.notes || '—'}</td>
+      <td>${escapeHtml(s.customer_name || '—')}</td>
+      <td>${escapeHtml(s.service_name || '—')}</td>
+      <td><span style="font-weight:600;">${escapeHtml(formatCurrency(s.amount))}</span></td>
+      <td><span style="text-transform:capitalize;">${escapeHtml(s.payment_method || 'cash')}</span></td>
+      <td>${escapeHtml(s.notes || '—')}</td>
       <td>
         <button class="btn btn-sm btn-danger" onclick="deleteSale(${s.id})" title="Eliminar">🗑️</button>
       </td>
@@ -616,7 +626,7 @@ function renderSalesList(el) {
   el.innerHTML = `
     <div class="date-nav">
       <button class="date-nav-btn" onclick="changeSalesDate(-1)">◀</button>
-      <h3>${isToday ? 'Hoy' : formatDate(salesDate)}</h3>
+      <h3>${isToday ? 'Hoy' : escapeHtml(formatDate(salesDate))}</h3>
       <button class="date-nav-btn" onclick="changeSalesDate(1)">▶</button>
       ${!isToday ? `<button class="date-today-btn" onclick="goSalesToday()">Hoy</button>` : ''}
     </div>
@@ -624,7 +634,7 @@ function renderSalesList(el) {
       <div style="display:flex;justify-content:space-between;align-items:center;">
         <div>
           <div class="stat-label">Total de ventas</div>
-          <div class="stat-value" style="font-size:24px;">${formatCurrency(total)}</div>
+          <div class="stat-value" style="font-size:24px;">${escapeHtml(formatCurrency(total))}</div>
         </div>
         <div style="font-size:36px; opacity:0.3;">💰</div>
       </div>
@@ -673,11 +683,11 @@ async function openSaleModal() {
 
     const custSelect = document.getElementById('s-customer');
     custSelect.innerHTML = '<option value="">Sin cliente (venta directa)</option>' +
-      customers.map(c => `<option value="${c.id}">${c.name} ${c.phone ? '- ' + c.phone : ''}</option>`).join('');
+      customers.map(c => `<option value="${c.id}">${escapeHtml(c.name)} ${c.phone ? '- ' + escapeHtml(c.phone) : ''}</option>`).join('');
 
     const servSelect = document.getElementById('s-service');
     servSelect.innerHTML = '<option value="">Seleccionar servicio...</option>' +
-      services.map(s => `<option value="${s.id}">${s.name} - ${formatCurrency(s.price)}</option>`).join('');
+      services.map(s => `<option value="${s.id}">${escapeHtml(s.name)} - ${escapeHtml(formatCurrency(s.price))}</option>`).join('');
 
     // Fill amount when service selected
     servSelect.onchange = () => {
@@ -739,7 +749,7 @@ async function renderWhatsApp() {
       waPollTimer = setInterval(() => pollWA(el), 2000);
     }
   } catch (err) {
-    el.innerHTML = `<div class="empty-state"><p>Error: ${err.message}</p></div>`;
+    el.innerHTML = `<div class="empty-state"><p>Error: ${escapeHtml(err.message)}</p></div>`;
   }
 }
 
@@ -763,11 +773,11 @@ async function pollWA(el) {
           convs.map(c => `
             <div class="wa-conv-item ${waSelectedConv == c.id ? 'active' : ''}" data-conv-id="${c.id}" onclick="selectWAConv(${c.id})">
               <div style="display:flex;justify-content:space-between;align-items:start;">
-                <strong style="font-size:13px;">${c.name || c.phone}</strong>
+                <strong style="font-size:13px;">${escapeHtml(c.name || c.phone)}</strong>
                 <span style="font-size:10px;color:var(--text-muted);">${c.mode === 'AI' ? '🤖' : '👤'}</span>
               </div>
               <div style="font-size:11px;color:var(--text-muted);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
-                ${c.last_message ? c.last_message.slice(0, 40) : 'Sin mensajes'}
+                ${c.last_message ? escapeHtml(c.last_message.slice(0, 40)) : 'Sin mensajes'}
               </div>
             </div>
           `).join('');
@@ -778,8 +788,8 @@ async function pollWA(el) {
       const msgsDiv = document.getElementById('wa-messages');
       if (msgsDiv) {
         msgsDiv.innerHTML = conv.messages.map(m => `
-          <div class="wa-msg wa-msg-${m.role}">
-            <div class="wa-msg-text">${m.content}</div>
+          <div class="wa-msg wa-msg-${escapeHtml(m.role)}">
+            <div class="wa-msg-text">${escapeHtml(m.content)}</div>
             <div class="wa-msg-time">${new Date(m.created_at).toLocaleTimeString('es-AR', {hour:'2-digit',minute:'2-digit'})}</div>
           </div>
         `).join('');
@@ -964,8 +974,8 @@ function renderWAChatDetail(conv) {
   chatArea.innerHTML = `
     <div style="padding:14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
       <div>
-        <strong style="font-size:14px;">${conv.name || conv.phone}</strong>
-        <span style="font-size:11px;color:var(--text-muted);margin-left:8px;">${conv.phone}</span>
+        <strong style="font-size:14px;">${escapeHtml(conv.name || conv.phone)}</strong>
+        <span style="font-size:11px;color:var(--text-muted);margin-left:8px;">${escapeHtml(conv.phone)}</span>
       </div>
       <div style="display:flex;gap:6px;align-items:center;">
         <span id="wa-mode-label" style="font-size:11px;padding:3px 8px;border-radius:6px;font-weight:500;background:${conv.mode === 'AI' ? 'rgba(48,209,88,0.15)' : 'rgba(255,214,10,0.15)'};color:${conv.mode === 'AI' ? '#30d158' : '#ffd60a'};">
@@ -979,8 +989,8 @@ function renderWAChatDetail(conv) {
     </div>
     <div id="wa-messages" style="flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:8px;">
       ${conv.messages ? conv.messages.map(m => `
-        <div class="wa-msg wa-msg-${m.role}">
-          <div class="wa-msg-text">${m.content}</div>
+        <div class="wa-msg wa-msg-${escapeHtml(m.role)}">
+          <div class="wa-msg-text">${escapeHtml(m.content)}</div>
           <div class="wa-msg-time">${new Date(m.created_at).toLocaleTimeString('es-AR', {hour:'2-digit',minute:'2-digit'})}</div>
         </div>
       `).join('') : ''}
@@ -1047,12 +1057,12 @@ async function renderSettings() {
           ${allEmployees.map(e => `
             <div class="settings-item">
               <div class="item-info">
-                ${e.name}
-                ${e.phone ? `<span>${e.phone}</span>` : ''}
+                ${escapeHtml(e.name)}
+                ${e.phone ? `<span>${escapeHtml(e.phone)}</span>` : ''}
                 ${!e.active ? `<span style="color:var(--text-muted);">(inactivo)</span>` : ''}
               </div>
               <div class="item-actions">
-                <button class="btn btn-sm btn-secondary" onclick="editEmployee(${e.id}, '${e.name}', '${e.phone || ''}')">✏️</button>
+                <button class="btn btn-sm btn-secondary" onclick='editEmployee(${e.id}, "${escapeHtml(e.name)}", "${escapeHtml(e.phone || '')}")'>✏️</button>
                 <button class="btn btn-sm btn-danger" onclick="deleteEmployee(${e.id})">🗑️</button>
               </div>
             </div>
@@ -1071,12 +1081,12 @@ async function renderSettings() {
           ${allServices.map(s => `
             <div class="settings-item">
               <div class="item-info">
-                ${s.name}
-                <span>${formatCurrency(s.price)} · ${s.duration} min</span>
+                ${escapeHtml(s.name)}
+                <span>${escapeHtml(formatCurrency(s.price))} · ${escapeHtml(s.duration)} min</span>
                 ${!s.active ? `<span style="color:var(--text-muted);">(inactivo)</span>` : ''}
               </div>
               <div class="item-actions">
-                <button class="btn btn-sm btn-secondary" onclick="editService(${s.id}, '${s.name}', ${s.price}, ${s.duration})">✏️</button>
+                <button class="btn btn-sm btn-secondary" onclick='editService(${s.id}, "${escapeHtml(s.name)}", ${s.price}, ${s.duration})'>✏️</button>
                 <button class="btn btn-sm btn-danger" onclick="deleteService(${s.id})">🗑️</button>
               </div>
             </div>
@@ -1091,7 +1101,7 @@ async function renderSettings() {
       </div>
     `;
   } catch (err) {
-    el.innerHTML = `<div class="empty-state"><p>Error: ${err.message}</p></div>`;
+    el.innerHTML = `<div class="empty-state"><p>Error: ${escapeHtml(err.message)}</p></div>`;
   }
 }
 
