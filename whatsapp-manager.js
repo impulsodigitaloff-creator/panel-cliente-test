@@ -208,8 +208,97 @@ ${empList}
 `.trim();
 }
 
+async function callGemini(systemPrompt, history) {
+  let contents = history
+    .filter(m => m.content && m.content.trim())
+    .map(m => ({
+      role: m.role === 'user' ? 'user' : 'model',
+      parts: [{ text: m.content.trim() }]
+    }));
+
+  // Gemini exige que el primer mensaje sea del usuario
+  if (contents.length > 0 && contents[0].role !== 'user') {
+    contents.shift();
+  }
+  if (contents.length === 0) {
+    contents = [{ role: 'user', parts: [{ text: 'Hola' }] }];
+  }
+
+  let lastErr;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const result = await gemini.models.generateContent({
+        model: GEMINI_MODEL,
+        contents,
+        config: {
+          systemInstruction: systemPrompt,
+          temperature: 0.7,
+          maxOutputTokens: 500
+        }
+      });
+      if (!result || !result.text) throw new Error('Respuesta vacía de Gemini');
+      return result.text.trim();
+    } catch (err) {
+      lastErr = err.message;
+      console.warn(`[bot] Gemini error (intento ${attempt + 1}/3): ${lastErr}`);
+      if (attempt < 2) {
+        await new Promise(r => setTimeout(r, (attempt + 1) * 3000));
+      }
+    }
+  }
+  throw new Error(lastErr);
+}
+
+async function callGroq(systemPrompt, history) {
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    ...history.map(m => ({
+      role: m.role === 'user' ? 'user' : 'assistant',
+      content: m.content
+    }))
+  ];
+
+  let lastErr;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${GROQ_API_KEY}`
+        },
+        body: JSON.stringify({
+          model: GROQ_MODEL,
+          messages,
+          temperature: 0.7,
+          max_tokens: 500
+        })
+      });
+      if (res.status === 429) {
+        const errText = await res.text();
+        lastErr = `Groq 429: ${errText.slice(0, 200)}`;
+        console.warn(`[bot] Groq rate limit (intento ${attempt + 1}/3), esperando ${(attempt + 1) * 15}s...`);
+        await new Promise(r => setTimeout(r, (attempt + 1) * 15000));
+        continue;
+      }
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`Groq ${res.status}: ${errText.slice(0, 200)}`);
+      }
+      const data = await res.json();
+      const choice = data.choices[0];
+      return choice.message.content.trim();
+    } catch (err) {
+      lastErr = err.message;
+      if (attempt < 2) {
+        await new Promise(r => setTimeout(r, (attempt + 1) * 15000));
+      }
+    }
+  }
+  throw new Error(lastErr);
+}
+
 async function callLLM(history, businessId, phone, pushName) {
-  if (!GEMINI_API_KEY || !gemini) return '⚠️ WhatsApp sin configurar. Contactá al administrador.';
   let resolveLock, rejectLock;
   try {
     // Serialize LLM calls per business to avoid spikes
@@ -221,46 +310,25 @@ async function callLLM(history, businessId, phone, pushName) {
 
     const systemPrompt = buildSystemPrompt(businessId);
 
-    // Convertir historial al formato de Gemini
-    let contents = history
-      .filter(m => m.content && m.content.trim())
-      .map(m => ({
-        role: m.role === 'user' ? 'user' : 'model',
-        parts: [{ text: m.content.trim() }]
-      }));
-
-    // Gemini exige que el primer mensaje sea del usuario
-    if (contents.length > 0 && contents[0].role !== 'user') {
-      contents.shift();
-    }
-    if (contents.length === 0) {
-      contents = [{ role: 'user', parts: [{ text: 'Hola' }] }];
-    }
-
-    let lastErr;
-    for (let attempt = 0; attempt < 3; attempt++) {
+    // Intentar Gemini primero
+    if (gemini) {
       try {
-        const result = await gemini.models.generateContent({
-          model: GEMINI_MODEL,
-          contents,
-          config: {
-            systemInstruction: systemPrompt,
-            temperature: 0.7,
-            maxOutputTokens: 500
-          }
-        });
-        if (!result || !result.text) throw new Error('Respuesta vacía de Gemini');
-        return result.text.trim();
+        return await callGemini(systemPrompt, history);
       } catch (err) {
-        lastErr = err.message;
-        console.warn(`[bot] Gemini error (intento ${attempt + 1}/3): ${lastErr}`);
-        if (attempt < 2) {
-          await new Promise(r => setTimeout(r, (attempt + 1) * 3000));
-        }
+        console.warn('[bot] Gemini falló, usando Groq como fallback:', err.message);
       }
     }
-    console.error('[bot] LLM error tras reintentos:', lastErr);
-    return 'Perdón, estoy teniendo problemas de conexión. Déjame derivarte con un asesor humano 🙏';
+
+    // Fallback a Groq
+    if (GROQ_API_KEY) {
+      try {
+        return await callGroq(systemPrompt, history);
+      } catch (err) {
+        console.error('[bot] Groq fallback también falló:', err.message);
+      }
+    }
+
+    return '⚠️ WhatsApp sin configurar. Contactá al administrador.';
   } finally {
     if (resolveLock) resolveLock();
     llmLocks.delete(businessId);
