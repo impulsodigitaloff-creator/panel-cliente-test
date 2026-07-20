@@ -1042,15 +1042,16 @@ async function renderSettings() {
     ]);
 
     el.innerHTML = `
+      <div class="settings-container">
       <div class="settings-section">
         <h3>👤 Empleados</h3>
         <div id="employees-list">
           ${allEmployees.map(e => `
             <div class="settings-item">
               <div class="item-info">
-                ${escapeHtml(e.name)}
+                <span>${escapeHtml(e.name)}</span>
                 ${e.phone ? `<span>${escapeHtml(e.phone)}</span>` : ''}
-                ${!e.active ? `<span style="color:var(--text-muted);">(inactivo)</span>` : ''}
+                ${!e.active ? `<span>(inactivo)</span>` : ''}
               </div>
               <div class="item-actions">
                 <button class="btn btn-sm btn-secondary" onclick='editEmployee(${e.id}, "${escapeHtml(e.name)}", "${escapeHtml(e.phone || '')}")'>✏️</button>
@@ -1060,8 +1061,8 @@ async function renderSettings() {
           `).join('') || '<div class="empty-state"><p>Sin empleados</p></div>'}
         </div>
         <div class="add-bar">
-          <input type="text" id="new-emp-name" placeholder="Nombre del empleado" style="flex:1;">
-          <input type="text" id="new-emp-phone" placeholder="Teléfono">
+          <input type="text" id="new-emp-name" placeholder="Nombre del empleado">
+          <input type="text" id="new-emp-phone" placeholder="Teléfono" class="sm">
           <button class="btn btn-sm btn-primary" onclick="addEmployee()">Agregar</button>
         </div>
       </div>
@@ -1072,9 +1073,9 @@ async function renderSettings() {
           ${allServices.map(s => `
             <div class="settings-item">
               <div class="item-info">
-                ${escapeHtml(s.name)}
+                <span>${escapeHtml(s.name)}</span>
                 <span>${escapeHtml(formatCurrency(s.price))} · ${escapeHtml(s.duration)} min</span>
-                ${!s.active ? `<span style="color:var(--text-muted);">(inactivo)</span>` : ''}
+                ${!s.active ? `<span>(inactivo)</span>` : ''}
               </div>
               <div class="item-actions">
                 <button class="btn btn-sm btn-secondary" onclick='editService(${s.id}, "${escapeHtml(s.name)}", ${s.price}, ${s.duration})'>✏️</button>
@@ -1084,11 +1085,12 @@ async function renderSettings() {
           `).join('') || '<div class="empty-state"><p>Sin servicios</p></div>'}
         </div>
         <div class="add-bar">
-          <input type="text" id="new-srv-name" placeholder="Nombre del servicio" style="flex:1;">
-          <input type="number" id="new-srv-price" placeholder="Precio $" style="width:120px;">
-          <input type="number" id="new-srv-duration" placeholder="Min" style="width:80px;" value="30">
+          <input type="text" id="new-srv-name" placeholder="Nombre del servicio">
+          <input type="number" id="new-srv-price" placeholder="Precio $" class="sm">
+          <input type="number" id="new-srv-duration" placeholder="Min" class="xs" value="30">
           <button class="btn btn-sm btn-primary" onclick="addService()">Agregar</button>
         </div>
+      </div>
       </div>
     `;
   } catch (err) {

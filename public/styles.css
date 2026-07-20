@@ -387,3 +387,36 @@ tbody td .cliente-contacto { font-size: 11px; color: var(--text-muted); }
   .wa-chat-area { border-radius:0 0 12px 12px; min-height:400px; }
   .wa-msg { max-width:85%; }
 }
+
+/* ===== Settings - Empleados y Servicios ===== */
+.settings-container { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+@media (max-width:768px) { .settings-container { grid-template-columns:1fr; } }
+
+.settings-section {
+  background:var(--bg-card); border:1px solid var(--border);
+  border-radius:var(--radius); padding:22px;
+}
+.settings-section h3 {
+  font-size:15px; font-weight:600; margin-bottom:16px;
+  padding-bottom:12px; border-bottom:1px solid var(--border);
+}
+#employees-list, #services-list { display:flex; flex-direction:column; gap:6px; margin-bottom:16px; }
+.settings-item {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:11px 14px; background:var(--bg-hover); border-radius:var(--radius-sm);
+  transition:background var(--transition);
+}
+.settings-item:hover { background:var(--bg-input); }
+.item-info { display:flex; flex-direction:column; gap:2px; }
+.item-info span:first-child { font-size:13px; font-weight:500; }
+.item-info span:not(:first-child) { font-size:11px; color:var(--text-muted); }
+.item-actions { display:flex; gap:4px; }
+.add-bar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.add-bar input {
+  padding:8px 12px; background:var(--bg-input); border:1px solid var(--border);
+  border-radius:var(--radius-sm); color:var(--text-primary); font-size:12px; outline:none;
+  flex:1; min-width:110px;
+}
+.add-bar input.sm { flex:none; width:100px; }
+.add-bar input.xs { flex:none; width:70px; }
+.add-bar input:focus { border-color:var(--border-focus); box-shadow:0 0 0 3px var(--accent-subtle); }
