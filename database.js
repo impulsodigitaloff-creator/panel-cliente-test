@@ -194,12 +194,16 @@ try {
     ['Tratamiento caída de cabello (por sesión)', 35000, 45]
   ];
   for (const biz of bizList) {
-    const svcCount = db.prepare('SELECT COUNT(*) as count FROM services WHERE business_id = ?').get(biz.id);
-    if (svcCount.count === 0) {
-      for (const [name, price, duration] of services) {
+    const existing = db.prepare('SELECT name FROM services WHERE business_id = ?').all(biz.id).map(r => r.name);
+    let added = 0;
+    for (const [name, price, duration] of services) {
+      if (!existing.includes(name)) {
         svcIns.run(biz.id, name, price, duration);
+        added++;
       }
-      console.log(`[db] ${services.length} servicios cargados para negocio ${biz.id}`);
+    }
+    if (added > 0) {
+      console.log(`[db] ${added} servicios nuevos agregados para negocio ${biz.id} (total: ${existing.length + added})`);
     }
   }
 } catch (e) { console.log('[db] Migración servicios skip:', e.message); }
