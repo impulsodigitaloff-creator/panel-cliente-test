@@ -202,10 +202,10 @@ Reglas CRÍTICAS:
 - Si pide hablar con un humano: ${phone} 📞
 - Si pide la ubicación: ${address} (${mapsLink}) 📍
 - Cuando confirmes un turno, INCLUÍ siempre: fecha, hora, servicio, nombre del cliente, dirección y que puede cancelar/reprogramar por WhatsApp.
-- REGLA DE AGENDADO:apenas tengas TODOS los datos (nombre, teléfono, fecha, hora y servicio), agregá al final de tu mensaje EXACTAMENTE esta línea oculta:\n[AGENDAR nombre=NOMBRE telefono=TELEFONO fecha=YYYY-MM-DD hora=HH:MM servicio=SERVICIO]
+- REGLA DE AGENDADO:apenas tengas TODOS los datos (nombre, fecha, hora y servicio), agregá al final de tu mensaje EXACTAMENTE esta línea oculta:\n[AGENDAR nombre=NOMBRE fecha=YYYY-MM-DD hora=HH:MM servicio=SERVICIO]\nNo hace falta pedir teléfono, se usa el de WhatsApp automáticamente.
 - NUNCA agregues la línea [AGENDAR ...] si te falta algún dato. Primero preguntá lo que falta.
 
-Ejemplo cuando ya tenés todo: [AGENDAR nombre=Augusto telefono=2641234567 fecha=2026-07-20 hora=11:30 servicio=Corte]
+Ejemplo cuando ya tenés todo: [AGENDAR nombre=Augusto fecha=2026-07-20 hora=11:30 servicio=Corte]
 
 Servicios disponibles (solo de esta lista):
 ${srvList}
