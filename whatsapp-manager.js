@@ -105,12 +105,48 @@ function formatAlternatives(args, slots) {
 Te ofrezco estas alternativas:\n${list}\n\n¿Alguno te sirve?`;
 }
 
+function getServiceDescription(name) {
+  const desc = {
+    'Corte hombre o niño': 'Corte y estilizado para hombres o niños. Ideal para mantener el pelo en forma y fresco.',
+    'Corte mujer': 'Corte personalizado según el rostro y estilo. Incluye lavado y secado para un resultado prolijo.',
+    'Brushing': 'Lavado + cepillado con secador para dejar el cabello liso, brillante y sin frizz. Ideal para el día a día.',
+    'Peinado semirecogido': 'Peinado elegante con parte del cabello recogido. Ideal para eventos, fiestas o casamientos.',
+    'Peinado recogido completo': 'Todo el cabello recogido en un moño o trenza. Ideal para bodas, fiestas de 15 o eventos formales.',
+    'Peinado novia/madrina/egresada': 'Peinado sofisticado y duradero para ocasiones especiales. Look impecable durante horas.',
+    'Trenzados laterales': 'Trenzas decorativas a los costados. Ideal para looks románticos, festivos o informales.',
+    'Semitrenzado': 'Mitad del cabello trenzado y mitad suelto. Look moderno, femenino y versátil.',
+    'Trenzado completo': 'Todo el cabello trenzado. Ideal para eventos, deportes o looks prácticos y ordenados.',
+    'Lavado de cabello (incluye secado en máquina)': 'Lavado profesional con productos específicos y secado en máquina. Ideal para mantener la higiene y el cabello suelto.',
+    'Aplicación de color/hena (incluye secado en máquina)': 'Aplicación de color o hena natural. Ideal para matizar, cubrir canas o dar reflejos.',
+    'Color raíz o crecimiento': 'Tinte solo en la raíz para cubrir crecimiento o canas. Ideal para mantener el color sin teñir todo el cabello.',
+    'Coloración nacional': 'Tinte completo con coloración nacional. Ideal para cambios de color o cubrir canas de forma económica.',
+    'Coloración importada': 'Tinte completo con coloración importada de mejor calidad. Ideal para colores más vibrantes, duraderos y cuidados.',
+    'Mechas o babylights': 'Mechas finas y naturales que iluminan el cabello. Ideal para dar luz y movimiento sin un cambio drástico.',
+    'Balayage': 'Técnica de mechas a mano alzada para un efecto degradado natural. Ideal para un look moderno y luminoso.',
+    'Mechón contorno': 'Mechas en el contorno del rostro para iluminar. Ideal para resaltar facciones.',
+    'Barrido de color': 'Técnica que aclara o cambia el color en las puntas. Ideal para transiciones suaves.',
+    'Decoloración global': 'Decoloración de todo el cabello para rubios o colores fantasía. Ideal para cambios radicales.',
+    'Ondulación permanente': 'Proceso químico para crear ondas o rizos permanentes. Ideal para quienes quieren volumen y textura constante.',
+    'Hidratación': 'Tratamiento superficial que devuelve humedad al cabello. Ideal para pelo seco o apagado.',
+    'Nutrición ácida/argán/biotina': 'Tratamiento profundo con activos que reparan y nutren. Ideal para cabello seco, sin brillo o con frizz.',
+    'Ampolla reestructurante': 'Tratamiento intensivo para reconstruir la fibra capilar. Ideal para cabello muy dañado por químicas o calor.',
+    'Alisado': 'Alisado permanente o semipermanente para eliminar el frizz y dejar el pelo liso. Ideal para quienes quieren facilidad de peinado.',
+    'Keratina/botox': 'Tratamiento con keratina o botox capilar que alisa, hidrata y reduce el volumen. Ideal para cabello rebelde o con frizz.',
+    'Tratamiento matizador violeta o azul': 'Tratamiento con pigmentos violetas o azules para neutralizar tonos amarillos/naranjas. Ideal para rubios o decolorados.',
+    'Tratamiento caída de cabello (por sesión)': 'Tratamiento específico para fortalecer el cabello y reducir la caída. Ideal para cabellos débiles o con pérdida de densidad.'
+  };
+  return desc[name] || 'Servicio profesional disponible en el salón. Te explico más si querés.';
+}
+
 function buildSystemPrompt(businessId) {
   const services = db.getServices(businessId);
   const employees = db.getEmployees(businessId);
   const biz = db.getBusinessById(businessId);
   const bizName = (biz && biz.name) ? biz.name : 'nuestro salón';
-  let srvList = services.map(s => `  - ${s.name}: $${s.price} (${s.duration} min)`).join('\n') || '  (sin servicios cargados)';
+  let srvList = services.map(s => {
+    const desc = getServiceDescription(s.name);
+    return `  - ${s.name}: $${s.price} (${s.duration} min) — ${desc}`;
+  }).join('\n') || '  (sin servicios cargados)';
   let empList = employees.map(e => `  - ${e.name}${e.phone ? ' ('+e.phone+')' : ''}`).join('\n') || '  (sin empleados cargados)';
 
   let bizInfo = '';
@@ -129,32 +165,51 @@ Info del negocio (usá esto si el cliente pregunta):
   const address = (biz && biz.address) ? biz.address : 'Mendoza Sur 340, J5402GUH, San Juan, Argentina';
   const mapsLink = 'https://maps.google.com/?q=Mendoza+Sur+340+J5402GUH+San+Juan+Argentina';
   return `
-Sos la asistente virtual de "${bizName}", una peluquería/barbería/estética en San Juan. Respondé en español, tono cálido, profesional y amable. Usá emojis con moderación ✨.
+Sos una estilista profesional y asesora de "${bizName}". Tu trabajo NO es solo dar precios: sos una consultora de belleza capilar. Respondé en español, tono cálido, profesional, amable y cercano. Usá emojis con moderación ✨.
 
-Tu rol: sos recepcionista y asesora. Ayudás al cliente a agendar turnos y resolver dudas.
+Tu rol: entender la necesidad del cliente, recomendarle el mejor servicio, explicarle por qué y recién después mostrar precio y agendar turno.
 ${bizInfo}
+FLUJO DE ATENCIÓN OBLIGATORIO:
+1. SALUDO: "¡Hola! Soy la asistente de ${bizName}. Contame, ¿qué te gustaría lograr con tu cabello hoy? ¿Buscás un cambio, mantenimiento o reparación? 😊"
+2. DIAGNÓSTICO: Antes de recomendar, hacé preguntas UNA A UNA para entender:
+   - ¿Qué problema o deseo tiene? (seco, dañado, frizz, sin brillo, cambio de color, cubrir raíces, etc.)
+   - ¿El cabello está teñido o es natural?
+   - ¿Hace cuánto se hizo un color/tratamiento?
+   - ¿Qué resultado espera?
+   - ¿Tiene alguna alergia o sensibilidad en el cuero cabelludo?
+   NO hagas todas las preguntas de golpe. Adaptate a la conversación.
+3. RECOMENDACIÓN: Con la info suficiente, recomendá 1 o 2 servicios de la lista EXPLICANDO:
+   - Para qué sirve.
+   - Qué beneficios trae.
+   - En qué casos se recomienda.
+   - Por qué se ajusta a lo que el cliente contó.
+4. PRECIO: Mostrá el precio real de la base de datos SOLO cuando el cliente lo pida o cuando ya esté de acuerdo con la recomendación.
+5. COMPLEMENTARIOS: Si aplica, sugerí tratamientos complementarios explicando el motivo, pero sin insistir ni presionar.
+6. RESERVA: Solo cuando el cliente confirme que quiere el servicio, pedí nombre, fecha y hora para agendar el turno.
+
 Reglas CRÍTICAS:
+- NUNCA inventes servicios, tratamientos o precios. Usá EXACTAMENTE los que están en la lista de la base de datos.
+- NUNCA respondas solo con un precio. Siempre acompañá con una breve explicación profesional.
+- Si el cliente no sabe qué necesita, hacéle preguntas de diagnóstico antes de recomendar.
+- Si el cliente dice "mi pelo está seco/sin brillo", recomendá hidratación o nutrición explicando por qué.
+- Si el cliente dice "mi pelo está muy dañado", recomendá ampolla reestructurante o keratina/botox.
+- Si el cliente dice "quiero cambiar de color", preguntá si busca cubrir canas, reflejos, mechas o un cambio total, y luego recomendá el servicio adecuado.
+- Si el cliente dice "quiero cortarme el pelo", preguntá si es corte de mujer o hombre/niño y luego agendá el correcto.
 - Horarios de atención: Lunes a Sábados de 9:30 a 20:00 hs. Domingos CERRADO.
 - SOLO ofrecé horarios disponibles entre 9:30 y 20:00 de lunes a sábado. NUNCA sugieras horarios fuera de ese rango ni domingos.
-- Si el cliente pide un horario fuera de atención (ej: a las 21:00, 08:00 o domingo), respondé amablemente que el negocio está cerrado y ofrecé el siguiente horario disponible dentro del horario de atención.
-- Si el cliente pide un horario ocupado, ofrecé automáticamente las alternativas más cercanas disponibles.
-- NUNCA digas "no tengo ese servicio" o "no tengo X en mi lista". Si el cliente pide algo que no está literalmente en la lista, IGUAL agendá el turno con lo que pidió. Anotá el servicio como el cliente lo dijo.
-- Si el cliente pide algo específico (ej: "corte adulto", "corte hombre", "rayitos"), aceptalo y pedí los datos para el turno: nombre, fecha, hora. No cuestiones si lo hacemos o no.
-- Si el cliente no sabe qué quiere, RECOMENDÁ de la lista los servicios que más le convengan según lo que cuenta.
-- Si el cliente dice "quiero cortarme el pelo", pedí nombre y hora, y agendá "Corte" como servicio.
+- Si el cliente pide un horario fuera de atención u ocupado, respondé amablemente y ofrecé las alternativas más cercanas disponibles.
 - Si pide hablar con un humano/asesor, dale el teléfono: ${biz && (biz.human_phone || biz.phone) ? (biz.human_phone || biz.phone) : 'consultar'} 📞
 - Si pide la ubicación, dale la dirección: ${address} y el link: ${mapsLink} 📍
 - Si pide el Instagram, dale: ${biz && biz.instagram ? biz.instagram : 'consultar'} 📷
 - Si pregunta horarios, dale: Lunes a Sábados 9:30-20:00, Domingos cerrado 🕐
-- Mensajes breves, cordiales y claros, 2 a 4 líneas.
-- Al iniciar la conversación: "¡Hola! Bienvenido/a 😊 ¿En qué puedo ayudarte hoy?"
+- Mensajes breves, cordiales y claros, 2 a 4 líneas. Nunca saturés al cliente.
 - Si no podés resolver algo: "Perdón, déjame derivarte con un asesor 🙏"
 - Cuando confirmes un turno, INCLUÍ siempre: fecha, hora, servicio, nombre del cliente, dirección (${address}) y el mensaje de que puede cancelar/reprogramar por WhatsApp.
 - REGLA DE AGENDADO: cuando ya tengas el nombre, fecha y hora del cliente dentro del horario de atención, agregá al final de tu mensaje EXACTAMENTE esta línea (sin decirle al cliente que lo estás agregando):\n[AGENDAR nombre=NOMBRE fecha=YYYY-MM-DD hora=HH:MM servicio=SERVICIO]
 
 Ejemplo: si el cliente es Augusto, pide corte para mañana 20/07 a las 11:30, tu mensaje termina con:\n[AGENDAR nombre=Augusto fecha=2026-07-20 hora=11:30 servicio=Corte]
 
-Servicios que ofrecemos (para recomendar si el cliente no sabe qué elegir):
+Servicios disponibles en la base de datos (recomendá SOLO de esta lista):
 ${srvList}
 
 Empleados:
@@ -172,25 +227,6 @@ async function callLLM(history, businessId, phone, pushName) {
         content: m.content
       }))
     ];
-    const tools = [
-      {
-        type: 'function',
-        function: {
-          name: 'crear_turno',
-          description: 'Crear un turno en el sistema. Llamar esta función SOLO cuando tengas nombre del cliente, fecha y hora confirmados.',
-          parameters: {
-            type: 'object',
-            properties: {
-              nombre: { type: 'string', description: 'Nombre del cliente' },
-              fecha: { type: 'string', description: 'Fecha en formato YYYY-MM-DD' },
-              hora: { type: 'string', description: 'Hora en formato HH:MM (24hs)' },
-              servicio: { type: 'string', description: 'Nombre del servicio solicitado' }
-            },
-            required: ['nombre', 'fecha', 'hora', 'servicio']
-          }
-        }
-      }
-    ];
     const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -200,10 +236,8 @@ async function callLLM(history, businessId, phone, pushName) {
       body: JSON.stringify({
         model: GROQ_MODEL,
         messages,
-        tools,
-        tool_choice: 'auto',
         temperature: 0.7,
-        max_tokens: 400
+        max_tokens: 600
       })
     });
     if (!res.ok) {
@@ -212,40 +246,6 @@ async function callLLM(history, businessId, phone, pushName) {
     }
     const data = await res.json();
     const choice = data.choices[0];
-    // Si la IA llamó una función, ejecutarla
-    if (choice.message.tool_calls && choice.message.tool_calls.length > 0) {
-      for (const tc of choice.message.tool_calls) {
-        if (tc.function.name === 'crear_turno') {
-          const args = JSON.parse(tc.function.arguments);
-          const result = createAppointmentFromAI(businessId, args, phone, pushName);
-          // Mandar una segunda llamada para que la IA confirme
-          messages.push(choice.message);
-          messages.push({
-            role: 'tool',
-            tool_call_id: tc.id,
-            content: JSON.stringify(result)
-          });
-          const res2 = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${GROQ_API_KEY}`
-            },
-            body: JSON.stringify({
-              model: GROQ_MODEL,
-              messages,
-              temperature: 0.7,
-              max_tokens: 300
-            })
-          });
-          if (res2.ok) {
-            const data2 = await res2.json();
-            return data2.choices[0].message.content.trim();
-          }
-          return '✅ Turno agendado. Te esperamos!';
-        }
-      }
-    }
     return choice.message.content.trim();
   } catch (err) {
     console.error('[bot] LLM error:', err.message);
