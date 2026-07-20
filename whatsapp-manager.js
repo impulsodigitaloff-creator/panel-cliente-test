@@ -197,11 +197,10 @@ Reglas CRÍTICAS:
 - Si pide hablar con un humano: ${phone} 📞
 - Si pide la ubicación: ${address} (${mapsLink}) 📍
 - Cuando confirmes un turno, INCLUÍ siempre: fecha, hora, servicio, nombre del cliente, dirección y que puede cancelar/reprogramar por WhatsApp.
-- REGLA DE AGENDADO: al final de tu mensaje agregá EXACTAMENTE esta línea oculta:\n[AGENDAR nombre=NOMBRE telefono=TELEFONO fecha=YYYY-MM-DD hora=HH:MM servicio=SERVICIO]
+- REGLA DE AGENDADO: SOLO cuando tengas TODOS los datos (nombre, teléfono, fecha, hora y servicio), agregá al final de tu mensaje EXACTAMENTE esta línea oculta:\n[AGENDAR nombre=NOMBRE telefono=TELEFONO fecha=YYYY-MM-DD hora=HH:MM servicio=SERVICIO]
+- NUNCA agregues la línea [AGENDAR ...] si te falta algún dato. Primero preguntá lo que falta.
 
-Ejemplo: [AGENDAR nombre=Augusto telefono=2641234567 fecha=2026-07-20 hora=11:30 servicio=Corte]
-
-Antes de agendar, PEDÍ EL TELÉFONO al cliente si no te lo dio. No uses el número de WhatsApp.
+Ejemplo cuando ya tenés todo: [AGENDAR nombre=Augusto telefono=2641234567 fecha=2026-07-20 hora=11:30 servicio=Corte]
 
 Servicios disponibles (solo de esta lista):
 ${srvList}
@@ -343,6 +342,11 @@ function createAppointmentFromAI(businessId, args, phone, pushName) {
     const biz = db.getBusinessById(businessId);
     if (!args || !args.fecha || !args.hora || !args.nombre || !args.servicio) {
       return { success: false, message: 'Faltan datos para agendar el turno' };
+    }
+    // Rechazar valores placeholder que la IA pone cuando todavía no tiene los datos
+    const ph = (v) => /^(NOMBRE|TELEFONO|YYYY-MM-DD|HH:MM|SERVICIO|XXXXXX)$/i.test(v);
+    if (ph(args.nombre) || ph(args.fecha) || ph(args.hora) || ph(args.servicio) || (args.telefono && ph(args.telefono))) {
+      return { success: false, reason: 'placeholder', message: 'Faltan datos reales del cliente' };
     }
     if (!validateDate(args.fecha) || !validateTime(args.hora)) {
       return { success: false, message: 'Fecha u hora inválidas', args };
@@ -491,11 +495,16 @@ async function handleIncomingMessage(sock, msg, businessId) {
       const result = createAppointmentFromAI(businessId, args, phone, pushName);
       if (result.success && result.confirmationText) {
         reply = result.confirmationText;
+      } else if (result.reason === 'placeholder') {
+        // La IA preguntaba datos todavía, mostrar su mensaje original sin el tag
+        reply = reply.replace(agendaMatch.original, '').trim();
       } else if (result.alternatives) {
         reply = formatAlternatives(result.args || args, result.alternatives);
       } else {
         reply = reply.replace(agendaMatch.original, '').trim() + ' (Perdón, hubo un error al guardar el turno. Te llamamos para confirmar 🙏)';
       }
+    } else {
+      reply = reply.replace(agendaMatch.original, '').trim();
     }
   }
 
