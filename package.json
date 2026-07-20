@@ -7,9 +7,6 @@
     "start": "node server.js",
     "dev": "node server.js"
   },
-  "engines": {
-    "node": ">=18.0.0"
-  },
   "dependencies": {
     "@whiskeysockets/baileys": "^7.0.0-rc13",
     "bcrypt": "^5.1.1",
