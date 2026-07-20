@@ -78,7 +78,8 @@ app.use(session({
     sameSite: 'lax',
     maxAge: 24 * 60 * 60 * 1000
   },
-  name: 'pc.sid'
+  name: 'pc.sid',
+  proxy: isProduction
 }));
 
 function requireAuth(req, res, next) {
