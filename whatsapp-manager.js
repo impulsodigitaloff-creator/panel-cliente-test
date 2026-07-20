@@ -159,10 +159,6 @@ function getServiceDescription(name) {
 
 function buildSystemPrompt(businessId) {
   const biz = db.getBusinessById(businessId);
-  // Si el negocio tiene un prompt personalizado, usarlo directamente
-  if (biz && biz.custom_prompt && biz.custom_prompt.trim()) {
-    return biz.custom_prompt.trim();
-  }
   const services = db.getServices(businessId);
   const employees = db.getEmployees(businessId);
   const bizName = (biz && biz.name) ? biz.name : 'nuestro salón';
@@ -177,7 +173,7 @@ function buildSystemPrompt(businessId) {
   const phone = biz && (biz.human_phone || biz.phone) ? (biz.human_phone || biz.phone) : 'consultar';
   const instagram = biz && biz.instagram ? biz.instagram : 'consultar';
   const promo = biz && biz.promo ? biz.promo : '';
-  return `
+  const defaultPrompt = `
 Sos la asistente de "${bizName}". Asesorá con tono cálido, profesional y breve (2-4 líneas, emojis moderados ✨).
 Tu objetivo: entender qué necesita el cliente, recomendar el servicio correcto de la lista y agendar turno.
 
@@ -217,6 +213,11 @@ ${srvList}
 Empleados:
 ${empList}
 `.trim();
+  // Si hay prompt personalizado, usarlo pero siempre con la lista real de servicios
+  if (biz && biz.custom_prompt && biz.custom_prompt.trim()) {
+    return biz.custom_prompt.trim() + '\n\nServicios disponibles (precios reales):\n' + srvList;
+  }
+  return defaultPrompt;
 }
 
 async function callGemini(systemPrompt, history) {
