@@ -29,6 +29,82 @@ function isBusinessOpen(date, time) {
   return minutes >= open && minutes < close;
 }
 
+function formatDate(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  const dias = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+  const meses = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+  return `${dias[date.getDay()]} ${d} de ${meses[date.getMonth()]} de ${y}`;
+}
+
+function isSlotOccupied(businessId, date, time) {
+  const existing = db.prepare("SELECT id FROM appointments WHERE business_id = ? AND date = ? AND time = ? AND status IN ('pending','confirmed')").get(businessId, date, time);
+  return !!existing;
+}
+
+function findAvailableSlots(businessId, date, count = 3) {
+  const slots = [];
+  const d = new Date(date + 'T00:00');
+  if (d.getDay() === 0) return slots;
+  const open = 9 * 60 + 30;
+  const close = 20 * 60;
+  for (let minutes = open; minutes < close; minutes += 30) {
+    const h = Math.floor(minutes / 60).toString().padStart(2, '0');
+    const m = (minutes % 60).toString().padStart(2, '0');
+    const time = `${h}:${m}`;
+    if (!isSlotOccupied(businessId, date, time)) {
+      slots.push({ date, time });
+      if (slots.length >= count) break;
+    }
+  }
+  return slots;
+}
+
+function getNextAvailableSlots(businessId, fromDate, fromTime, count = 3) {
+  const slots = [];
+  let currentDate = new Date(fromDate + 'T' + fromTime);
+  // Empezar desde el siguiente slot de 30 min
+  currentDate.setMinutes(currentDate.getMinutes() + 30);
+  while (slots.length < count) {
+    const y = currentDate.getFullYear();
+    const m = (currentDate.getMonth() + 1).toString().padStart(2, '0');
+    const d = currentDate.getDate().toString().padStart(2, '0');
+    const dateStr = `${y}-${m}-${d}`;
+    const h = currentDate.getHours().toString().padStart(2, '0');
+    const min = currentDate.getMinutes().toString().padStart(2, '0');
+    const timeStr = `${h}:${min}`;
+    if (isBusinessOpen(dateStr, timeStr) && !isSlotOccupied(businessId, dateStr, timeStr)) {
+      slots.push({ date: dateStr, time: timeStr });
+    }
+    currentDate.setMinutes(currentDate.getMinutes() + 30);
+  }
+  return slots;
+}
+
+function formatConfirmation(result, biz) {
+  const address = (biz && biz.address) ? biz.address : 'Mendoza Sur 340, J5402GUH, San Juan, Argentina';
+  const mapsLink = 'https://maps.google.com/?q=Mendoza+Sur+340+J5402GUH+San+Juan+Argentina';
+  return `✅ ¡Turno confirmado, ${result.nombre || 'Cliente'}!
+
+✂️ Servicio: ${result.servicio || 'Servicio'}
+🗓️ Fecha: ${formatDate(result.fecha)}
+🕐 Hora: ${result.hora}
+📍 Dirección: ${address}
+🌎 Google Maps: ${mapsLink}
+
+Si necesitás cancelar o reprogramar, respondé por WhatsApp y te ayudamos. 🙌`;
+}
+
+function formatAlternatives(args, slots) {
+  if (!slots || slots.length === 0) {
+    return '😊 No encontré horarios disponibles próximos. Escribime otra fecha/hora y te confirmo.';
+  }
+  const list = slots.map((s, i) => `${i + 1}. ${formatDate(s.date)} a las ${s.time}`).join('\n');
+  return `😊 Disculpá, el horario del ${formatDate(args.fecha)} a las ${args.hora} no está disponible.
+
+Te ofrezco estas alternativas:\n${list}\n\n¿Alguno te sirve?`;
+}
+
 function buildSystemPrompt(businessId) {
   const services = db.getServices(businessId);
   const employees = db.getEmployees(businessId);
@@ -50,25 +126,30 @@ Info del negocio (usá esto si el cliente pregunta):
 `;
   }
 
+  const address = (biz && biz.address) ? biz.address : 'Mendoza Sur 340, J5402GUH, San Juan, Argentina';
+  const mapsLink = 'https://maps.google.com/?q=Mendoza+Sur+340+J5402GUH+San+Juan+Argentina';
   return `
 Sos la asistente virtual de "${bizName}", una peluquería/barbería/estética en San Juan. Respondé en español, tono cálido, profesional y amable. Usá emojis con moderación ✨.
 
 Tu rol: sos recepcionista y asesora. Ayudás al cliente a agendar turnos y resolver dudas.
 ${bizInfo}
 Reglas CRÍTICAS:
+- Horarios de atención: Lunes a Sábados de 9:30 a 20:00 hs. Domingos CERRADO.
+- SOLO ofrecé horarios disponibles entre 9:30 y 20:00 de lunes a sábado. NUNCA sugieras horarios fuera de ese rango ni domingos.
+- Si el cliente pide un horario fuera de atención (ej: a las 21:00, 08:00 o domingo), respondé amablemente que el negocio está cerrado y ofrecé el siguiente horario disponible dentro del horario de atención.
+- Si el cliente pide un horario ocupado, ofrecé automáticamente las alternativas más cercanas disponibles.
 - NUNCA digas "no tengo ese servicio" o "no tengo X en mi lista". Si el cliente pide algo que no está literalmente en la lista, IGUAL agendá el turno con lo que pidió. Anotá el servicio como el cliente lo dijo.
 - Si el cliente pide algo específico (ej: "corte adulto", "corte hombre", "rayitos"), aceptalo y pedí los datos para el turno: nombre, fecha, hora. No cuestiones si lo hacemos o no.
 - Si el cliente no sabe qué quiere, RECOMENDÁ de la lista los servicios que más le convengan según lo que cuenta.
 - Si el cliente dice "quiero cortarme el pelo", pedí nombre y hora, y agendá "Corte" como servicio.
-- Si dice para qué día/hora, confirmá el turno.
 - Si pide hablar con un humano/asesor, dale el teléfono: ${biz && (biz.human_phone || biz.phone) ? (biz.human_phone || biz.phone) : 'consultar'} 📞
-- Si pide la ubicación, dale la dirección: ${biz && biz.address ? biz.address : 'consultar'} 📍
+- Si pide la ubicación, dale la dirección: ${address} y el link: ${mapsLink} 📍
 - Si pide el Instagram, dale: ${biz && biz.instagram ? biz.instagram : 'consultar'} 📷
-- Si pregunta horarios, dale: ${biz && biz.hours ? biz.hours : 'consultar'} 🕐
-- Mensajes breves, 2 a 4 líneas.
+- Si pregunta horarios, dale: Lunes a Sábados 9:30-20:00, Domingos cerrado 🕐
+- Mensajes breves, cordiales y claros, 2 a 4 líneas.
 - Al iniciar la conversación: "¡Hola! Bienvenido/a 😊 ¿En qué puedo ayudarte hoy?"
 - Si no podés resolver algo: "Perdón, déjame derivarte con un asesor 🙏"
-- Regla de horarios: atendemos Lunes a Sábados de 9:30 a 20:00. Domingos CERRADO. Si el cliente pide un horario fuera de esos horarios (ej: a las 21:00 o domingo), decile amablemente que no abrimos a esa hora y ofrecéle un horario dentro de 9:30-20:00 de lunes a sábado.
+- Cuando confirmes un turno, INCLUÍ siempre: fecha, hora, servicio, nombre del cliente, dirección (${address}) y el mensaje de que puede cancelar/reprogramar por WhatsApp.
 - REGLA DE AGENDADO: cuando ya tengas el nombre, fecha y hora del cliente dentro del horario de atención, agregá al final de tu mensaje EXACTAMENTE esta línea (sin decirle al cliente que lo estás agregando):\n[AGENDAR nombre=NOMBRE fecha=YYYY-MM-DD hora=HH:MM servicio=SERVICIO]
 
 Ejemplo: si el cliente es Augusto, pide corte para mañana 20/07 a las 11:30, tu mensaje termina con:\n[AGENDAR nombre=Augusto fecha=2026-07-20 hora=11:30 servicio=Corte]
@@ -174,9 +255,16 @@ async function callLLM(history, businessId, phone, pushName) {
 
 function createAppointmentFromAI(businessId, args, phone, pushName) {
   try {
+    const biz = db.getBusinessById(businessId);
     // Validar horario de atención
     if (!isBusinessOpen(args.fecha, args.hora)) {
-      return { success: false, message: 'Fuera de horario de atención (Lunes a Sábados 9:30-20:00)' };
+      const alternatives = getNextAvailableSlots(businessId, args.fecha, args.hora, 3);
+      return { success: false, reason: 'closed', message: 'Fuera de horario de atención (Lunes a Sábados 9:30-20:00)', alternatives, args };
+    }
+    // Validar que no esté ocupado
+    if (isSlotOccupied(businessId, args.fecha, args.hora)) {
+      const alternatives = getNextAvailableSlots(businessId, args.fecha, args.hora, 3);
+      return { success: false, reason: 'occupied', message: 'Horario ocupado', alternatives, args };
     }
     // Buscar o crear cliente por phone
     let customer = db.prepare('SELECT id FROM customers WHERE business_id = ? AND phone = ?').get(businessId, phone);
@@ -200,10 +288,12 @@ function createAppointmentFromAI(businessId, args, phone, pushName) {
       service ? service.id : null
     );
     console.log(`[bot] Turno creado: ${args.nombre} - ${args.servicio} - ${args.fecha} ${args.hora}`);
-    return { success: true, message: 'Turno creado exitosamente', nombre: args.nombre, fecha: args.fecha, hora: args.hora, servicio: args.servicio };
+    const result = { success: true, message: 'Turno creado exitosamente', nombre: args.nombre, fecha: args.fecha, hora: args.hora, servicio: args.servicio };
+    result.confirmationText = formatConfirmation(result, biz);
+    return result;
   } catch (e) {
     console.error('[bot] Error creando turno:', e.message);
-    return { success: false, message: e.message };
+    return { success: false, message: e.message, args };
   }
 }
 
@@ -293,8 +383,10 @@ async function startConnection(businessId) {
         const args = Object.fromEntries(agendaMatch[1].trim().split(/\s+/).map(p => p.split('=')));
         if (args.nombre && args.fecha && args.hora && args.servicio) {
           const result = createAppointmentFromAI(businessId, args, phone, pushName);
-          if (result.success) {
-            reply = reply.replace(agendaMatch[0], '').trim();
+          if (result.success && result.confirmationText) {
+            reply = result.confirmationText;
+          } else if (result.alternatives) {
+            reply = formatAlternatives(result.args || args, result.alternatives);
           } else {
             reply = reply.replace(agendaMatch[0], '').trim() + ' (Perdón, hubo un error al guardar el turno. Te llamamos para confirmar 🙏)';
           }
@@ -409,8 +501,10 @@ async function startPairingConnection(businessId, phoneNumber) {
         const args = Object.fromEntries(agendaMatch[1].trim().split(/\s+/).map(p => p.split('=')));
         if (args.nombre && args.fecha && args.hora && args.servicio) {
           const result = createAppointmentFromAI(businessId, args, phone, pushName);
-          if (result.success) {
-            reply = reply.replace(agendaMatch[0], '').trim();
+          if (result.success && result.confirmationText) {
+            reply = result.confirmationText;
+          } else if (result.alternatives) {
+            reply = formatAlternatives(result.args || args, result.alternatives);
           } else {
             reply = reply.replace(agendaMatch[0], '').trim() + ' (Perdón, hubo un error al guardar el turno. Te llamamos para confirmar 🙏)';
           }
@@ -419,7 +513,7 @@ async function startPairingConnection(businessId, phoneNumber) {
 
       db.insertWAMessage(conv.id, 'assistant', reply);
       try {
-        await sock.sendMessage(msg.key.remoteJid, { text: reply });
+        await conn.sock.sendMessage(msg.key.remoteJid, { text: reply });
         console.log(`[bot] → ${phone}: ${reply.slice(0, 60)}`);
       } catch (err) {
         console.error(`[bot] Error enviando a ${phone}:`, err.message);
@@ -489,6 +583,8 @@ async function processReminders() {
       if (!conn) continue;
 
       // Confirmación a clientes y al negocio
+      const mapsLink = 'https://maps.google.com/?q=Mendoza+Sur+340+J5402GUH+San+Juan+Argentina';
+      const address = biz.address || 'Mendoza Sur 340, J5402GUH, San Juan, Argentina';
       const confirmations = d.prepare(`
         SELECT a.*, c.name as customer_name, c.phone as customer_phone,
                s.name as service_name, e.name as employee_name
@@ -501,7 +597,7 @@ async function processReminders() {
       for (const appt of confirmations) {
         const jid = getCustomerJid(appt.customer_phone, appt.customer_id);
         if (jid) {
-          const msg = `✅ ¡Hola ${appt.customer_name || ''}! Tu turno quedó confirmado:\n\n✂️ ${appt.service_name || 'Servicio'}\n🗓️ ${appt.date}\n🕐 ${appt.time}${appt.employee_name ? '\n💅 ' + appt.employee_name : ''}\n\nNos vemos en ${biz.name} 😊`;
+          const msg = `✅ ¡Hola ${appt.customer_name || ''}! Tu turno quedó confirmado:\n\n✂️ ${appt.service_name || 'Servicio'}\n🗓️ ${appt.date}\n🕐 ${appt.time}${appt.employee_name ? '\n💅 ' + appt.employee_name : ''}\n📍 ${address}\n🌎 ${mapsLink}\n\nSi necesitás cancelar o reprogramar, respondé por WhatsApp y te ayudamos. 🙌\n\nNos vemos en ${biz.name} 😊`;
           try {
             await conn.sock.sendMessage(jid, { text: msg });
             console.log(`[reminder] Confirmación turno ${appt.id} enviada a cliente`);
@@ -534,7 +630,7 @@ async function processReminders() {
       for (const appt of reminders1d) {
         const jid = getCustomerJid(appt.customer_phone, appt.customer_id);
         if (jid) {
-          const msg = `📅 Recordatorio de turno\n\nHola ${appt.customer_name || ''}, te recordamos tu turno de mañana:\n\n✂️ ${appt.service_name || 'Servicio'}\n🕐 ${appt.time}${appt.employee_name ? '\n💅 ' + appt.employee_name : ''}\n\nTe esperamos 😊`;
+          const msg = `📅 Recordatorio de turno\n\nHola ${appt.customer_name || ''}, te recordamos tu turno de mañana:\n\n✂️ ${appt.service_name || 'Servicio'}\n🕐 ${appt.time}${appt.employee_name ? '\n💅 ' + appt.employee_name : ''}\n📍 ${address}\n🌎 ${mapsLink}\n\nSi necesitás cancelar o reprogramar, respondé por WhatsApp. Te esperamos 😊`;
           try {
             await conn.sock.sendMessage(jid, { text: msg });
             console.log(`[reminder] 1 día turno ${appt.id} enviado a cliente`);
@@ -542,7 +638,7 @@ async function processReminders() {
         }
         const bizJid = biz.phone.includes('@') ? biz.phone : (biz.phone ? biz.phone + '@s.whatsapp.net' : null);
         if (bizJid) {
-          const msgBiz = `📅 Recordatorio de turno mañana\n\n👤 ${appt.customer_name || 'Cliente'}\n✂️ ${appt.service_name || 'Servicio'}\n🕐 ${appt.time}${appt.employee_name ? '\n💅 ' + appt.employee_name : ''}\n📞 ${appt.customer_phone || 'sin teléfono'}`;
+          const msgBiz = `📅 Recordatorio de turno mañana\n\n👤 ${appt.customer_name || 'Cliente'}\n✂️ ${appt.service_name || 'Servicio'}\n🗓️ ${appt.date}\n🕐 ${appt.time}${appt.employee_name ? '\n💅 ' + appt.employee_name : ''}\n📞 ${appt.customer_phone || 'sin teléfono'}`;
           try {
             await conn.sock.sendMessage(bizJid, { text: msgBiz });
             console.log(`[reminder] 1 día turno ${appt.id} enviado a negocio`);
@@ -568,7 +664,7 @@ async function processReminders() {
       for (const appt of reminders1h) {
         const jid = getCustomerJid(appt.customer_phone, appt.customer_id);
         if (jid) {
-          const msg = `🔔 ¡Falta 1 hora!\n\nHola ${appt.customer_name || ''}, tu turno es hoy a las ${appt.time}:\n\n✂️ ${appt.service_name || 'Servicio'}${appt.employee_name ? '\n💅 ' + appt.employee_name : ''}\n\nTe esperamos 🙌`;
+          const msg = `🔔 ¡Falta 1 hora!\n\nHola ${appt.customer_name || ''}, tu turno es hoy a las ${appt.time}:\n\n✂️ ${appt.service_name || 'Servicio'}${appt.employee_name ? '\n💅 ' + appt.employee_name : ''}\n📍 ${address}\n🌎 ${mapsLink}\n\nTe esperamos 🙌`;
           try {
             await conn.sock.sendMessage(jid, { text: msg });
             console.log(`[reminder] 1h turno ${appt.id} enviado a cliente`);
@@ -576,7 +672,7 @@ async function processReminders() {
         }
         const bizJid = biz.phone.includes('@') ? biz.phone : (biz.phone ? biz.phone + '@s.whatsapp.net' : null);
         if (bizJid) {
-          const msgBiz = `🔔 ¡Falta 1 hora!\n\n👤 ${appt.customer_name || 'Cliente'}\n✂️ ${appt.service_name || 'Servicio'}\n🕐 ${appt.time}${appt.employee_name ? '\n💅 ' + appt.employee_name : ''}\n📞 ${appt.customer_phone || 'sin teléfono'}`;
+          const msgBiz = `🔔 ¡Falta 1 hora!\n\n👤 ${appt.customer_name || 'Cliente'}\n✂️ ${appt.service_name || 'Servicio'}\n🗓️ ${appt.date}\n🕐 ${appt.time}${appt.employee_name ? '\n💅 ' + appt.employee_name : ''}\n📞 ${appt.customer_phone || 'sin teléfono'}`;
           try {
             await conn.sock.sendMessage(bizJid, { text: msgBiz });
             console.log(`[reminder] 1h turno ${appt.id} enviado a negocio`);
