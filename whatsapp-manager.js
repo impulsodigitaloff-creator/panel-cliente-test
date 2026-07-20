@@ -197,9 +197,11 @@ Reglas CRÍTICAS:
 - Si pide hablar con un humano: ${phone} 📞
 - Si pide la ubicación: ${address} (${mapsLink}) 📍
 - Cuando confirmes un turno, INCLUÍ siempre: fecha, hora, servicio, nombre del cliente, dirección y que puede cancelar/reprogramar por WhatsApp.
-- REGLA DE AGENDADO: al final de tu mensaje agregá EXACTAMENTE esta línea oculta:\n[AGENDAR nombre=NOMBRE fecha=YYYY-MM-DD hora=HH:MM servicio=SERVICIO]
+- REGLA DE AGENDADO: al final de tu mensaje agregá EXACTAMENTE esta línea oculta:\n[AGENDAR nombre=NOMBRE telefono=TELEFONO fecha=YYYY-MM-DD hora=HH:MM servicio=SERVICIO]
 
-Ejemplo: [AGENDAR nombre=Augusto fecha=2026-07-20 hora=11:30 servicio=Corte]
+Ejemplo: [AGENDAR nombre=Augusto telefono=2641234567 fecha=2026-07-20 hora=11:30 servicio=Corte]
+
+Antes de agendar, PEDÍ EL TELÉFONO al cliente si no te lo dio. No uses el número de WhatsApp.
 
 Servicios disponibles (solo de esta lista):
 ${srvList}
@@ -360,10 +362,12 @@ function createAppointmentFromAI(businessId, args, phone, pushName) {
       const alternatives = getNextAvailableSlots(businessId, args.fecha, args.hora, 3);
       return { success: false, reason: 'occupied', message: 'Horario ocupado', alternatives, args };
     }
+    // Usar teléfono del cliente si lo dió, sino el de WhatsApp
+    const customerPhone = args.telefono || phone;
     // Buscar o crear cliente por phone
-    let customer = db.prepare('SELECT id FROM customers WHERE business_id = ? AND phone = ?').get(businessId, phone);
+    let customer = db.prepare('SELECT id FROM customers WHERE business_id = ? AND phone = ?').get(businessId, customerPhone);
     if (!customer) {
-      const r = db.prepare('INSERT INTO customers (business_id, name, phone) VALUES (?, ?, ?)').run(businessId, args.nombre || pushName || phone, phone);
+      const r = db.prepare('INSERT INTO customers (business_id, name, phone) VALUES (?, ?, ?)').run(businessId, args.nombre || pushName || customerPhone, customerPhone);
       customer = { id: r.lastInsertRowid };
     }
     // Buscar servicio por nombre (match parcial)
@@ -584,7 +588,7 @@ function parseAgendarTag(text) {
   const match = text.match(/\[AGENDAR\s+([^\]]+)\]/);
   if (!match) return null;
   const inner = match[1].trim();
-  const keys = ['nombre', 'fecha', 'hora', 'servicio'];
+  const keys = ['nombre', 'telefono', 'fecha', 'hora', 'servicio'];
   const result = { original: match[0] };
   let remaining = inner;
   for (let i = 0; i < keys.length; i++) {
