@@ -824,11 +824,11 @@ function renderWADisconnected(el, status) {
           WhatsApp > Dispositivos vinculados > Vincular con número de teléfono
         </p>
         <div style="background:var(--bg-card);border:2px dashed var(--accent);border-radius:16px;padding:24px 32px;display:inline-block;margin-bottom:16px;">
-          <span style="font-size:42px;font-weight:700;letter-spacing:8px;color:var(--accent);font-family:monospace;">${pairingCode}</span>
+          <span style="font-size:42px;font-weight:700;letter-spacing:8px;color:var(--accent);font-family:monospace;">${escapeHtml(pairingCode)}</span>
         </div>
         <div style="margin-top:16px;font-size:13px;color:var(--text-muted);">⏳ Esperando vinculación...</div>
       ` : status.status === 'pairing_error' ? `
-        <p style="font-size:13px;color:var(--danger);margin-bottom:16px;">Error: ${status.qr_string}</p>
+        <p style="font-size:13px;color:var(--danger);margin-bottom:16px;">Error: ${escapeHtml(status.qr_string || '')}</p>
         <p style="font-size:13px;color:var(--text-muted);margin-bottom:20px;">Conectá tu número de WhatsApp para que tus clientes puedan sacar turnos automáticamente.</p>
         <button class="btn btn-primary" onclick="connectWA()">Conectar con QR</button>
         <button class="btn btn-secondary" onclick="showPairingModal()" style="margin-left:8px;">Conectar con código</button>

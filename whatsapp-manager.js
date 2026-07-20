@@ -13,6 +13,7 @@ if (!fs.existsSync(AUTH_DIR)) fs.mkdirSync(AUTH_DIR, { recursive: true });
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
 const gemini = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null;
+const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
 
 // Configuración de transcripción de voz (Groq Whisper por defecto, OpenAI opcional)
 const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
@@ -344,13 +345,18 @@ function createAppointmentFromAI(businessId, args, phone, pushName) {
     if (!validateDate(args.fecha) || !validateTime(args.hora)) {
       return { success: false, message: 'Fecha u hora inválidas', args };
     }
+    // Validar que no sea en el pasado
+    const dt = new Date(`${args.fecha}T${args.hora}`);
+    if (isNaN(dt.getTime()) || dt.getTime() <= Date.now()) {
+      return { success: false, reason: 'past', message: 'No se pueden agendar turnos en el pasado. Pedile al cliente una fecha y hora futura.', args };
+    }
     // Validar horario de atención
     if (!isBusinessOpen(args.fecha, args.hora)) {
       const alternatives = getNextAvailableSlots(businessId, args.fecha, args.hora, 3);
       return { success: false, reason: 'closed', message: 'Fuera de horario de atención (Lunes a Sábados 9:30-20:00)', alternatives, args };
     }
     // Validar que no esté ocupado
-    if (isSlotOccupied(businessId, args.fecha, args.hora)) {
+    if (isSlotOccupied(businessId, args.fecha, args.hora) || db.isAppointmentSlotOccupied(businessId, args.fecha, args.hora)) {
       const alternatives = getNextAvailableSlots(businessId, args.fecha, args.hora, 3);
       return { success: false, reason: 'occupied', message: 'Horario ocupado', alternatives, args };
     }
@@ -367,15 +373,16 @@ function createAppointmentFromAI(businessId, args, phone, pushName) {
       service = db.prepare('SELECT id FROM services WHERE business_id = ? AND name LIKE ?').get(businessId, '%' + short + '%');
     }
     // Crear el turno
-    db.prepare('INSERT INTO appointments (business_id, customer_id, date, time, status, notes, service_id) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
-      businessId,
-      customer.id,
-      args.fecha,
-      args.hora,
-      'confirmed',
-      'Agendado por IA WhatsApp',
-      service ? service.id : null
-    );
+    db.createAppointment({
+      business_id: businessId,
+      customer_id: customer.id,
+      service_id: service ? service.id : null,
+      employee_id: null,
+      date: args.fecha,
+      time: args.hora,
+      status: 'confirmed',
+      notes: 'Agendado por IA WhatsApp'
+    });
     console.log(`[bot] Turno creado: ${args.nombre} - ${args.servicio} - ${args.fecha} ${args.hora}`);
     const result = { success: true, message: 'Turno creado exitosamente', nombre: args.nombre, fecha: args.fecha, hora: args.hora, servicio: args.servicio };
     result.confirmationText = formatConfirmation(result, biz);

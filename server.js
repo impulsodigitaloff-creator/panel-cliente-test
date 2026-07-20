@@ -3,6 +3,7 @@ const express = require('express');
 const session = require('express-session');
 const bcrypt = require('bcrypt');
 const path = require('path');
+const crypto = require('crypto');
 const db = require('./database');
 const wa = require('./whatsapp-manager');
 
@@ -10,7 +11,43 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 const isProduction = process.env.NODE_ENV === 'production';
 
+// Validación de variables críticas
+const requiredEnv = ['SESSION_SECRET', 'PANEL_API_KEY'];
+for (const key of requiredEnv) {
+  if (!process.env[key]) {
+    console.error(`[server] FATAL: ${key} no está configurado. El servidor no puede iniciar.`);
+    process.exit(1);
+  }
+}
+
+const AUTOLOGIN_SECRET = process.env.AUTOLOGIN_SECRET || process.env.PANEL_API_KEY;
+
+function verifyAutoLoginToken(token) {
+  if (typeof token !== 'string' || !token.includes('.')) return null;
+  const [payload, sig] = token.split('.');
+  try {
+    const expected = crypto.createHmac('sha256', AUTOLOGIN_SECRET).update(payload).digest('base64url');
+    if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
+    const data = JSON.parse(Buffer.from(payload, 'base64url').toString());
+    if (!data.email || !data.exp || data.exp < Date.now()) return null;
+    return data.email;
+  } catch (e) {
+    return null;
+  }
+}
+
 app.set('trust proxy', ['loopback', 'linklocal']);
+
+// Security headers básicos
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+  next();
+});
+
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
@@ -30,12 +67,9 @@ app.use((req, res, next) => {
 });
 
 const sessionSecret = process.env.SESSION_SECRET;
-if (!sessionSecret) {
-  console.warn('[server] WARNING: SESSION_SECRET no configurado. Usando fallback inseguro. Configurá SESSION_SECRET en variables de entorno.');
-}
 
 app.use(session({
-  secret: sessionSecret || 'panelcliente-secret-fallback',
+  secret: sessionSecret,
   resave: false,
   saveUninitialized: false,
   cookie: {
@@ -84,6 +118,11 @@ function validateTime(time) {
   return h >= 0 && h <= 23 && m >= 0 && m <= 59;
 }
 
+function isFutureDateTime(date, time) {
+  const dt = new Date(`${date}T${time}`);
+  return !isNaN(dt.getTime()) && dt.getTime() > Date.now();
+}
+
 function validatePositiveNumber(n) {
   const num = Number(n);
   return Number.isFinite(num) && num >= 0;
@@ -117,14 +156,22 @@ app.post('/api/login', (req, res) => {
   const key = `${req.ip || req.connection.remoteAddress}:${cleanEmail}`;
   const now = Date.now();
   const attempts = loginAttempts.get(key);
+  if (attempts && now - attempts.last > LOGIN_WINDOW_MS) {
+    loginAttempts.delete(key);
+  }
   if (attempts && attempts.count >= MAX_LOGIN_ATTEMPTS && now - attempts.last < LOGIN_WINDOW_MS) {
     return res.status(429).json({ error: 'Demasiados intentos. Probá más tarde.' });
   }
 
   const business = db.getBusinessByEmail(cleanEmail);
   if (!business || !bcrypt.compareSync(password, business.password_hash)) {
-    const current = loginAttempts.get(key) || { count: 0, last: now };
-    current.count += 1;
+    const current = loginAttempts.get(key) || { count: 0, first: now, last: now };
+    if (now - current.last > LOGIN_WINDOW_MS) {
+      current.count = 1;
+      current.first = now;
+    } else {
+      current.count += 1;
+    }
     current.last = now;
     loginAttempts.set(key, current);
     return res.status(401).json({ error: 'Credenciales inválidas' });
@@ -139,7 +186,7 @@ app.post('/api/login', (req, res) => {
 app.post('/api/logout', (req, res) => {
   req.session.destroy((err) => {
     if (err) return res.status(500).json({ error: 'Error al cerrar sesión' });
-    res.clearCookie('connect.sid');
+    res.clearCookie('pc.sid');
     res.json({ success: true });
   });
 });
@@ -175,15 +222,23 @@ app.get('/api/customers/:id', requireAuth, (req, res) => {
 
 app.post('/api/customers', requireAuth, (req, res) => {
   const { name, phone, email, notes } = req.body;
-  if (!name) return res.status(400).json({ error: 'Nombre requerido' });
-  const id = db.createCustomer({ business_id: req.session.businessId, name, phone, email, notes });
+  const cleanName = sanitizeString(name, 100);
+  if (!cleanName) return res.status(400).json({ error: 'Nombre requerido' });
+  const cleanEmail = email ? sanitizeString(email, 100).toLowerCase() : '';
+  if (cleanEmail && !validateEmail(cleanEmail)) return res.status(400).json({ error: 'Email inválido' });
+  const id = db.createCustomer({ business_id: req.session.businessId, name: cleanName, phone: sanitizeString(phone, 50), email: cleanEmail, notes: sanitizeString(notes, 1000) });
   res.json({ success: true, id });
 });
 
 app.put('/api/customers/:id', requireAuth, (req, res) => {
   const c = db.getCustomerById(req.params.id);
   if (!c || c.business_id !== req.session.businessId) return res.status(404).json({ error: 'No encontrado' });
-  db.updateCustomer(req.params.id, req.body);
+  const { name, phone, email, notes } = req.body;
+  const cleanName = sanitizeString(name, 100);
+  if (!cleanName) return res.status(400).json({ error: 'Nombre requerido' });
+  const cleanEmail = email ? sanitizeString(email, 100).toLowerCase() : '';
+  if (cleanEmail && !validateEmail(cleanEmail)) return res.status(400).json({ error: 'Email inválido' });
+  db.updateCustomer(req.params.id, { name: cleanName, phone: sanitizeString(phone, 50), email: cleanEmail, notes: sanitizeString(notes, 1000) });
   res.json({ success: true });
 });
 
@@ -293,6 +348,7 @@ app.post('/api/appointments', requireAuth, (req, res) => {
   if (!custId) return res.status(400).json({ error: 'Cliente requerido' });
   if (!validateDate(date)) return res.status(400).json({ error: 'Fecha inválida' });
   if (!validateTime(time)) return res.status(400).json({ error: 'Hora inválida' });
+  if (!isFutureDateTime(date, time)) return res.status(400).json({ error: 'No se pueden agendar turnos en el pasado' });
   if (!db.isBusinessOpen(date, time)) return res.status(400).json({ error: 'Horario fuera de atención. Lunes a Sábados 9:30-20:00' });
 
   const customer = db.getCustomerById(custId);
@@ -307,8 +363,12 @@ app.post('/api/appointments', requireAuth, (req, res) => {
   }
   if (status && !validateStatus(status)) return res.status(400).json({ error: 'Estado inválido' });
 
-  const id = db.createAppointment({ business_id: req.session.businessId, customer_id: custId, service_id: service_id ? parseInt(service_id, 10) : null, employee_id: employee_id ? parseInt(employee_id, 10) : null, date, time, status, notes: sanitizeString(notes, 1000) });
-  res.json({ success: true, id });
+  try {
+    const id = db.createAppointment({ business_id: req.session.businessId, customer_id: custId, service_id: service_id ? parseInt(service_id, 10) : null, employee_id: employee_id ? parseInt(employee_id, 10) : null, date, time, status, notes: sanitizeString(notes, 1000) });
+    res.json({ success: true, id });
+  } catch (e) {
+    return res.status(409).json({ error: e.message || 'Horario ocupado' });
+  }
 });
 
 app.put('/api/appointments/:id', requireAuth, (req, res) => {
@@ -319,9 +379,27 @@ app.put('/api/appointments/:id', requireAuth, (req, res) => {
   const { customer_id, service_id, employee_id, date, time, status, notes } = req.body;
   if (date && !validateDate(date)) return res.status(400).json({ error: 'Fecha inválida' });
   if (time && !validateTime(time)) return res.status(400).json({ error: 'Hora inválida' });
+  if (date && time && !isFutureDateTime(date, time)) return res.status(400).json({ error: 'No se pueden agendar turnos en el pasado' });
   if (date && time && !db.isBusinessOpen(date, time)) return res.status(400).json({ error: 'Horario fuera de atención' });
-  db.updateAppointment(id, { customer_id, service_id, employee_id, date, time, status, notes: sanitizeString(notes, 1000) });
-  res.json({ success: true });
+  if (status && !validateStatus(status)) return res.status(400).json({ error: 'Estado inválido' });
+  if (customer_id) {
+    const customer = db.getCustomerById(validateId(customer_id));
+    if (!customer || customer.business_id !== req.session.businessId) return res.status(400).json({ error: 'Cliente inválido' });
+  }
+  if (service_id) {
+    const svc = db.getServiceById(parseInt(service_id, 10), req.session.businessId);
+    if (!svc) return res.status(400).json({ error: 'Servicio inválido' });
+  }
+  if (employee_id) {
+    const emp = db.getEmployeeById(parseInt(employee_id, 10), req.session.businessId);
+    if (!emp) return res.status(400).json({ error: 'Empleado inválido' });
+  }
+  try {
+    db.updateAppointment(id, { customer_id, service_id, employee_id, date, time, status, notes: sanitizeString(notes, 1000) });
+    res.json({ success: true });
+  } catch (e) {
+    return res.status(409).json({ error: e.message || 'Horario ocupado' });
+  }
 });
 
 app.patch('/api/appointments/:id/status', requireAuth, (req, res) => {
@@ -434,7 +512,7 @@ app.put('/api/businesses/:id/info', requireAuth, (req, res) => {
   res.json({ success: true });
 });
 
-// Auto-login via POST (secure, password in body, not in URL)
+// Auto-login via POST (legacy, para compatibilidad con formularios antiguos)
 app.post('/auto-login', (req, res) => {
   const email = req.body.email;
   const password = req.body.password;
@@ -448,11 +526,21 @@ app.post('/auto-login', (req, res) => {
   }
   req.session.businessId = business.id;
   req.session.businessName = business.name;
-  // Si es una petición de navegador (form), redirigir; si es JSON, devolver JSON
   if (req.headers['content-type'] && req.headers['content-type'].includes('application/x-www-form-urlencoded')) {
     return res.redirect('/');
   }
   res.json({ success: true, redirect: '/' });
+});
+
+// Auto-login via token (seguro, usado desde el CRM)
+app.get('/auto-login', (req, res) => {
+  const email = verifyAutoLoginToken(req.query.token);
+  if (!email) return res.status(401).send('Token inválido o expirado');
+  const business = db.getBusinessByEmail(email.toLowerCase());
+  if (!business) return res.status(401).send('Negocio no encontrado');
+  req.session.businessId = business.id;
+  req.session.businessName = business.name;
+  res.redirect('/');
 });
 
 app.post('/api/businesses/setup', requireMasterKey, (req, res) => {

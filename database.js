@@ -13,6 +13,12 @@ const db = new Database(dbPath);
 
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
+db.pragma('busy_timeout = 5000');
+
+function sanitizeText(input, maxLength = 2000) {
+  if (typeof input !== 'string') return '';
+  return input.trim().slice(0, maxLength);
+}
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS businesses (
@@ -25,6 +31,8 @@ db.exec(`
     active INTEGER DEFAULT 1,
     created_at DATETIME DEFAULT (datetime('now', '-3 hours'))
   );
+
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_businesses_email ON businesses(email);
 
   CREATE TABLE IF NOT EXISTS employees (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -169,14 +177,6 @@ runMigration('ALTER TABLE appointments ADD COLUMN customer_reminder_1d_sent INTE
 runMigration('ALTER TABLE appointments ADD COLUMN customer_reminder_1h_sent INTEGER DEFAULT 0');
 runMigration('ALTER TABLE wa_conversations ADD COLUMN remote_jid TEXT DEFAULT \'\'');
 
-const businessCount = db.prepare('SELECT COUNT(*) as count FROM businesses').get();
-if (businessCount.count === 0) {
-  const hash = (pw) => bcrypt.hashSync(pw, 10);
-  const ins = db.prepare('INSERT INTO businesses (name, contact, email, password_hash) VALUES (?, ?, ?, ?)');
-  ins.run('Mi Negocio Demo', 'Admin', 'demo@panel.cliente', hash('demo123'));
-  ins.run('Carolina Lobos Estilista', 'Carolina Lobos', 'caroweb@panel.cliente', hash('caro123'));
-}
-
 // Migración: cargar servicios iniciales para todos los negocios que no tengan
 try {
   const bizList = db.prepare('SELECT id FROM businesses ORDER BY id').all();
@@ -225,7 +225,7 @@ try {
   }
 } catch (e) { console.log('[db] Migración servicios skip:', e.message); }
 
-// Migración: actualizar negocio "Carolina Lobos Estilista" con info completa
+// Migración: actualizar negocio "Carolina Lobos Estilista" con info completa SOLO si falta dirección
 try {
   const caro = db.prepare("SELECT id FROM businesses WHERE name LIKE '%Carolina%' OR name LIKE '%carolina%' ORDER BY id DESC LIMIT 1").get();
   if (caro) {
@@ -236,7 +236,7 @@ try {
       db.prepare('UPDATE wa_conversations SET remote_jid=? WHERE id=?').run(remoteJid, c.id);
     }
     const existing = db.prepare('SELECT address FROM businesses WHERE id = ?').get(caro.id);
-    if (!existing.address) {
+    if (!existing || !existing.address) {
       db.prepare('UPDATE businesses SET contact=?, phone=?, email=?, address=?, hours=?, instagram=?, human_phone=? WHERE id=?').run(
         'Carolina Lobos',
         '+54 264 470 1979',
@@ -249,11 +249,7 @@ try {
       );
       console.log(`[db] Info de Carolina Lobos Estilista actualizada (negocio ${caro.id})`);
     }
-    // Reset password para asegurar acceso
-    const newHash = bcrypt.hashSync('carolina2026', 10);
-    db.prepare('UPDATE businesses SET password_hash=? WHERE id=?').run(newHash, caro.id);
-    const biz = db.prepare('SELECT email FROM businesses WHERE id=?').get(caro.id);
-    console.log(`[db] Credenciales Carolina configuradas (email: ${biz.email})`);
+    // Ya no reseteamos la contraseña automáticamente por seguridad.
   }
 } catch (e) { console.log('[db] Migración Carolina skip:', e.message); }
 
@@ -496,11 +492,26 @@ const dbMethods = {
       WHERE a.id = ?
     `).get(id);
   },
+  isAppointmentSlotOccupied(businessId, date, time, excludeId = null) {
+    if (excludeId) {
+      return db.prepare("SELECT id FROM appointments WHERE business_id = ? AND date = ? AND time = ? AND status IN ('pending','confirmed') AND id != ?").get(businessId, date, time, excludeId);
+    }
+    return db.prepare("SELECT id FROM appointments WHERE business_id = ? AND date = ? AND time = ? AND status IN ('pending','confirmed')").get(businessId, date, time);
+  },
   createAppointment(data) {
+    if (this.isAppointmentSlotOccupied(data.business_id, data.date, data.time)) {
+      throw new Error('El horario ya está ocupado');
+    }
     const r = db.prepare('INSERT INTO appointments (business_id, customer_id, service_id, employee_id, date, time, status, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(data.business_id, data.customer_id, data.service_id, data.employee_id, data.date, data.time, data.status || 'pending', data.notes);
     return r.lastInsertRowid;
   },
   updateAppointment(id, data) {
+    const existing = db.prepare('SELECT business_id, date, time FROM appointments WHERE id = ?').get(id);
+    if (existing && (existing.date !== data.date || existing.time !== data.time)) {
+      if (this.isAppointmentSlotOccupied(existing.business_id, data.date, data.time, id)) {
+        throw new Error('El horario ya está ocupado');
+      }
+    }
     db.prepare('UPDATE appointments SET customer_id=?, service_id=?, employee_id=?, date=?, time=?, status=?, notes=? WHERE id=?').run(data.customer_id, data.service_id, data.employee_id, data.date, data.time, data.status, data.notes, id);
   },
   updateAppointmentStatus(id, status) {
@@ -547,13 +558,6 @@ const dbMethods = {
     }
     db.prepare('DELETE FROM appointments WHERE id = ?').run(id);
     return true;
-  },
-  deleteAppointment(id) {
-    const a = db.prepare('SELECT * FROM appointments WHERE id = ?').get(id);
-    if (a && a.sale_id) {
-      this.deleteSale(a.sale_id);
-    }
-    db.prepare('DELETE FROM appointments WHERE id = ?').run(id);
   },
 
   // Sales
