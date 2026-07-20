@@ -1,14 +1,19 @@
-const { makeWASocket, fetchLatestBaileysVersion, useMultiFileAuthState, Browsers, DisconnectReason } = require('@whiskeysockets/baileys');
+const { makeWASocket, fetchLatestBaileysVersion, useMultiFileAuthState, Browsers, DisconnectReason, downloadMediaMessage } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const db = require('./database');
+const OpenAI = require('openai');
 
 const AUTH_DIR = process.env.AUTH_DIR || path.join(__dirname, 'data', 'auth');
 if (!fs.existsSync(AUTH_DIR)) fs.mkdirSync(AUTH_DIR, { recursive: true });
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
 const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
+const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
+const MAX_VOICE_SIZE_MB = 25;
 
 const connections = new Map();
 const llmLocks = new Map(); // businessId -> Promise
@@ -316,6 +321,107 @@ function validateTime(time) {
   return h >= 0 && h <= 23 && m >= 0 && m <= 59;
 }
 
+async function transcribeAudioBuffer(buffer, businessId, phone) {
+  if (!openai) throw new Error('OpenAI no configurado');
+  if (buffer.length > MAX_VOICE_SIZE_MB * 1024 * 1024) {
+    throw new Error(`Audio demasiado grande (${(buffer.length / 1024 / 1024).toFixed(1)} MB > ${MAX_VOICE_SIZE_MB} MB)`);
+  }
+  const tmpPath = path.join(os.tmpdir(), `voice_${businessId}_${phone}_${Date.now()}.ogg`);
+  fs.writeFileSync(tmpPath, buffer);
+  try {
+    const result = await openai.audio.transcriptions.create({
+      file: fs.createReadStream(tmpPath),
+      model: 'whisper-1',
+      language: 'es',
+      response_format: 'json'
+    });
+    return result.text ? result.text.trim() : '';
+  } finally {
+    try { fs.unlinkSync(tmpPath); } catch (e) {}
+  }
+}
+
+async function extractMessageText(sock, msg, businessId, phone) {
+  const textMsg = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
+  if (textMsg) return { text: textMsg, isVoice: false };
+
+  const audioMsg = msg.message?.audioMessage || msg.message?.pttMessage;
+  if (audioMsg) {
+    if (!OPENAI_API_KEY || !openai) {
+      return { text: null, isVoice: true, error: 'voice_not_configured' };
+    }
+    console.log(`[bot] Audio recibido de ${phone}, descargando...`);
+    const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage });
+    console.log(`[bot] Audio descargado: ${buffer.length} bytes`);
+    const text = await transcribeAudioBuffer(buffer, businessId, phone);
+    console.log(`[bot] Audio transcrito: ${text.slice(0, 80)}...`);
+    return { text, isVoice: true };
+  }
+
+  return { text: null, isVoice: false };
+}
+
+async function handleIncomingMessage(sock, msg, businessId) {
+  if (msg.key.fromMe) return;
+  if (msg.key.remoteJid?.includes('@g.us')) return;
+  const isWA = msg.key.remoteJid?.includes('@s.whatsapp.net') || msg.key.remoteJid?.includes('@lid');
+  if (!isWA) return;
+  const phone = msg.key.remoteJid.split('@')[0];
+  const pushName = msg.pushName || '';
+  console.log(`[bot] msg: fromMe=${msg.key.fromMe}, jid=${msg.key.remoteJid}, msgType=${msg.message ? Object.keys(msg.message).join(',') : 'EMPTY'}`);
+  console.log(`[bot] msg raw: ${JSON.stringify(msg.message).slice(0,300)}`);
+
+  let extracted;
+  try {
+    extracted = await extractMessageText(sock, msg, businessId, phone);
+  } catch (err) {
+    console.error(`[bot] Error procesando audio de ${phone}:`, err.message);
+    await sock.sendMessage(msg.key.remoteJid, { text: 'Perdón, no pude entender el audio. ¿Podés enviarlo de nuevo o escribirme el mensaje? 🙏' });
+    return;
+  }
+
+  if (extracted.error === 'voice_not_configured') {
+    await sock.sendMessage(msg.key.remoteJid, { text: 'Perdón, todavía no puedo escuchar audios. Escribime el mensaje por favor 🙏' });
+    return;
+  }
+
+  const text = extracted.text;
+  if (!text) return;
+  const isVoice = extracted.isVoice;
+
+  const conv = db.getOrCreateWACoversation(businessId, phone, pushName, msg.key.remoteJid);
+  db.insertWAMessage(conv.id, 'user', text);
+  console.log(`[bot] ← ${phone}: ${isVoice ? '[🎙️ audio] ' : ''}${text.slice(0, 80)}`);
+  if (conv.mode === 'HUMAN') return;
+  const history = db.getRecentWAHistory(conv.id, 20);
+  let reply = await callLLM(history, businessId, phone, pushName);
+
+  // Detectar y ejecutar agendado
+  const agendaMatch = parseAgendarTag(reply);
+  if (agendaMatch) {
+    const args = agendaMatch;
+    if (args.nombre && args.fecha && args.hora && args.servicio) {
+      const result = createAppointmentFromAI(businessId, args, phone, pushName);
+      if (result.success && result.confirmationText) {
+        reply = result.confirmationText;
+      } else if (result.alternatives) {
+        reply = formatAlternatives(result.args || args, result.alternatives);
+      } else {
+        reply = reply.replace(agendaMatch.original, '').trim() + ' (Perdón, hubo un error al guardar el turno. Te llamamos para confirmar 🙏)';
+      }
+    }
+  }
+
+  db.insertWAMessage(conv.id, 'assistant', reply);
+  try {
+    await sock.sendMessage(msg.key.remoteJid, { text: reply });
+    console.log(`[bot] → ${phone}: ${reply.slice(0, 80)}`);
+  } catch (err) {
+    console.error(`[bot] Error enviando a ${phone}:`, err.message);
+    db.enqueueWAOutbox(conv.id, businessId, msg.key.remoteJid, reply);
+  }
+}
+
 async function startConnection(businessId) {
   if (connections.has(businessId)) {
     try { connections.get(businessId).sock.end(undefined); } catch (e) {}
@@ -381,47 +487,7 @@ async function startConnection(businessId) {
     if (type !== 'notify') return;
     for (const msg of messages) {
       try {
-        console.log(`[bot] msg: fromMe=${msg.key.fromMe}, jid=${msg.key.remoteJid}, msgType=${msg.message ? Object.keys(msg.message).join(',') : 'EMPTY'}`);
-        console.log(`[bot] msg raw: ${JSON.stringify(msg.message).slice(0,300)}`);
-        if (msg.key.fromMe) continue;
-        if (msg.key.remoteJid?.includes('@g.us')) continue;
-        const isWA = msg.key.remoteJid?.includes('@s.whatsapp.net') || msg.key.remoteJid?.includes('@lid');
-        if (!isWA) continue;
-        const phone = msg.key.remoteJid.split('@')[0];
-        const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
-        if (!text) continue;
-        const pushName = msg.pushName || '';
-        const conv = db.getOrCreateWACoversation(businessId, phone, pushName, msg.key.remoteJid);
-        db.insertWAMessage(conv.id, 'user', text);
-        console.log(`[bot] ← ${phone}: ${text.slice(0, 60)}`);
-        if (conv.mode === 'HUMAN') continue;
-        const history = db.getRecentWAHistory(conv.id, 20);
-        let reply = await callLLM(history, businessId, phone, pushName);
-
-        // Detectar y ejecutar agendado
-        const agendaMatch = parseAgendarTag(reply);
-        if (agendaMatch) {
-          const args = agendaMatch;
-          if (args.nombre && args.fecha && args.hora && args.servicio) {
-            const result = createAppointmentFromAI(businessId, args, phone, pushName);
-            if (result.success && result.confirmationText) {
-              reply = result.confirmationText;
-            } else if (result.alternatives) {
-              reply = formatAlternatives(result.args || args, result.alternatives);
-            } else {
-              reply = reply.replace(agendaMatch.original, '').trim() + ' (Perdón, hubo un error al guardar el turno. Te llamamos para confirmar 🙏)';
-            }
-          }
-        }
-
-        db.insertWAMessage(conv.id, 'assistant', reply);
-        try {
-          await sock.sendMessage(msg.key.remoteJid, { text: reply });
-          console.log(`[bot] → ${phone}: ${reply.slice(0, 60)}`);
-        } catch (err) {
-          console.error(`[bot] Error enviando a ${phone}:`, err.message);
-          db.enqueueWAOutbox(conv.id, businessId, msg.key.remoteJid, reply);
-        }
+        await handleIncomingMessage(sock, msg, businessId);
       } catch (err) {
         console.error(`[bot] Error procesando mensaje:`, err.message);
       }
@@ -529,45 +595,7 @@ async function startPairingConnection(businessId, phoneNumber) {
     if (type !== 'notify') return;
     for (const msg of messages) {
       try {
-        if (msg.key.fromMe) continue;
-        if (msg.key.remoteJid?.includes('@g.us')) continue;
-        const isWA = msg.key.remoteJid?.includes('@s.whatsapp.net') || msg.key.remoteJid?.includes('@lid');
-        if (!isWA) continue;
-        const phone = msg.key.remoteJid.split('@')[0];
-        const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
-        if (!text) continue;
-        const pushName = msg.pushName || '';
-        const conv = db.getOrCreateWACoversation(businessId, phone, pushName, msg.key.remoteJid);
-        db.insertWAMessage(conv.id, 'user', text);
-        console.log(`[bot] ← ${phone}: ${text.slice(0, 60)}`);
-        if (conv.mode === 'HUMAN') continue;
-        const history = db.getRecentWAHistory(conv.id, 20);
-        let reply = await callLLM(history, businessId, phone, pushName);
-
-        // Detectar y ejecutar agendado
-        const agendaMatch = parseAgendarTag(reply);
-        if (agendaMatch) {
-          const args = agendaMatch;
-          if (args.nombre && args.fecha && args.hora && args.servicio) {
-            const result = createAppointmentFromAI(businessId, args, phone, pushName);
-            if (result.success && result.confirmationText) {
-              reply = result.confirmationText;
-            } else if (result.alternatives) {
-              reply = formatAlternatives(result.args || args, result.alternatives);
-            } else {
-              reply = reply.replace(agendaMatch.original, '').trim() + ' (Perdón, hubo un error al guardar el turno. Te llamamos para confirmar 🙏)';
-            }
-          }
-        }
-
-        db.insertWAMessage(conv.id, 'assistant', reply);
-        try {
-          await conn.sock.sendMessage(msg.key.remoteJid, { text: reply });
-          console.log(`[bot] → ${phone}: ${reply.slice(0, 60)}`);
-        } catch (err) {
-          console.error(`[bot] Error enviando a ${phone}:`, err.message);
-          db.enqueueWAOutbox(conv.id, businessId, msg.key.remoteJid, reply);
-        }
+        await handleIncomingMessage(sock, msg, businessId);
       } catch (err) {
         console.error(`[bot] Error procesando mensaje:`, err.message);
       }
