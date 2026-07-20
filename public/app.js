@@ -6,7 +6,7 @@ let state = {
   appointments: [],
   sales: [],
   editingId: null,
-  currentDate: new Date().toISOString().split('T')[0]
+  currentDate: todayStr()
 };
 
 function escapeHtml(text) {
@@ -44,7 +44,7 @@ function toast(msg, type = 'info') {
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
 function openModal(id) { document.getElementById(id).classList.add('open'); }
 
-function todayStr() { return new Date().toISOString().split('T')[0]; }
+function todayStr() { const d = new Date(); d.setHours(d.getHours() - 3); return d.toISOString().split('T')[0]; }
 
 function formatTime(t) {
   if (!t) return '';
