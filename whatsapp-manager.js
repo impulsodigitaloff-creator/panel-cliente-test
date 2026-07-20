@@ -172,6 +172,7 @@ function buildSystemPrompt(businessId) {
   const mapsLink = 'https://maps.google.com/?q=Mendoza+Sur+340+J5402GUH+San+Juan+Argentina';
   const phone = biz && (biz.human_phone || biz.phone) ? (biz.human_phone || biz.phone) : 'consultar';
   const instagram = biz && biz.instagram ? biz.instagram : 'consultar';
+  const promo = biz && biz.promo ? biz.promo : '';
   return `
 Sos la asistente de "${bizName}". Asesorá con tono cálido, profesional y breve (2-4 líneas, emojis moderados ✨).
 Tu objetivo: entender qué necesita el cliente, recomendar el servicio correcto de la lista y agendar turno.
@@ -182,6 +183,7 @@ Info del negocio:
 - Horarios: Lunes a Sábados 9:30-20:00, Domingos cerrado
 - Teléfono humano: ${phone}
 - Instagram: ${instagram}
+${promo ? '\nPromociones vigentes:\n' + promo : ''}
 
 Flujo de atención:
 1. Saludá y preguntá qué busca el cliente.

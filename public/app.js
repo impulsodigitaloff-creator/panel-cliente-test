@@ -1077,6 +1077,7 @@ async function renderSettings() {
           <input type="text" id="biz-instagram" value="${escapeHtml(bizInfo.instagram || '')}" placeholder="Instagram (ej: @estilista.carolinalobos)">
           <input type="text" id="biz-address" value="${escapeHtml(bizInfo.address || '')}" placeholder="Dirección">
           <input type="text" id="biz-phone" value="${escapeHtml(bizInfo.human_phone || bizInfo.phone || '')}" placeholder="Teléfono de contacto">
+          <textarea id="biz-promo" rows="3" placeholder="Promociones para que la IA las mencione (ej: Jubilados 20% off los lunes)">${escapeHtml(bizInfo.promo || '')}</textarea>
           <button class="btn btn-sm btn-primary" onclick="saveBusinessInfo()" style="align-self:flex-end;">Guardar cambios</button>
         </div>
       </div>
@@ -1203,7 +1204,8 @@ async function saveBusinessInfo() {
   const data = {
     instagram: document.getElementById('biz-instagram').value.trim(),
     address: document.getElementById('biz-address').value.trim(),
-    human_phone: document.getElementById('biz-phone').value.trim()
+    human_phone: document.getElementById('biz-phone').value.trim(),
+    promo: document.getElementById('biz-promo').value.trim()
   };
   try {
     const biz = await (await fetch('/api/business', { credentials: 'include' })).json();
