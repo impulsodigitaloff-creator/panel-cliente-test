@@ -172,6 +172,7 @@ runMigration('ALTER TABLE businesses ADD COLUMN hours TEXT DEFAULT \'\'');
 runMigration('ALTER TABLE businesses ADD COLUMN instagram TEXT DEFAULT \'\'');
 runMigration('ALTER TABLE businesses ADD COLUMN human_phone TEXT DEFAULT \'\'');
 runMigration('ALTER TABLE businesses ADD COLUMN promo TEXT DEFAULT \'\'');
+runMigration('ALTER TABLE businesses ADD COLUMN custom_prompt TEXT DEFAULT \'\'');
 runMigration('ALTER TABLE appointments ADD COLUMN reminder_sent INTEGER DEFAULT 0');
 runMigration('ALTER TABLE appointments ADD COLUMN customer_confirmation_sent INTEGER DEFAULT 0');
 runMigration('ALTER TABLE appointments ADD COLUMN customer_reminder_1d_sent INTEGER DEFAULT 0');
@@ -302,7 +303,7 @@ const dbMethods = {
     db.prepare('UPDATE businesses SET password_hash = ? WHERE id = ?').run(hash, id);
   },
   updateBusinessInfo(id, data) {
-    const allowedCols = ['name', 'contact', 'phone', 'address', 'hours', 'instagram', 'human_phone', 'promo'];
+    const allowedCols = ['name', 'contact', 'phone', 'address', 'hours', 'instagram', 'human_phone', 'promo', 'custom_prompt'];
     const cols = Object.keys(data).filter(k => allowedCols.includes(k));
     if (cols.length === 0) return;
     const sets = cols.map(k => `${k}=?`).join(',');

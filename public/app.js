@@ -1078,6 +1078,10 @@ async function renderSettings() {
           <input type="text" id="biz-address" value="${escapeHtml(bizInfo.address || '')}" placeholder="Dirección">
           <input type="text" id="biz-phone" value="${escapeHtml(bizInfo.human_phone || bizInfo.phone || '')}" placeholder="Teléfono de contacto">
           <textarea id="biz-promo" rows="3" placeholder="Promociones para que la IA las mencione (ej: Jubilados 20% off los lunes)">${escapeHtml(bizInfo.promo || '')}</textarea>
+          <div style="margin-top:12px;">
+            <label style="font-size:12px;font-weight:500;color:var(--text-secondary);display:block;margin-bottom:4px;">🤖 Prompt personalizado de la IA</label>
+            <textarea id="biz-prompt" rows="6" placeholder="Dejalo vacío para usar el prompt automático con tus servicios. Si escribís algo, la IA usará SOLO este texto como instrucción." style="width:100%;padding:10px 12px;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-size:12px;font-family:inherit;resize:vertical;outline:none;">${escapeHtml(bizInfo.custom_prompt || '')}</textarea>
+          </div>
           <button class="btn btn-sm btn-primary" onclick="saveBusinessInfo()" style="align-self:flex-end;">Guardar cambios</button>
         </div>
       </div>
@@ -1205,7 +1209,8 @@ async function saveBusinessInfo() {
     instagram: document.getElementById('biz-instagram').value.trim(),
     address: document.getElementById('biz-address').value.trim(),
     human_phone: document.getElementById('biz-phone').value.trim(),
-    promo: document.getElementById('biz-promo').value.trim()
+    promo: document.getElementById('biz-promo').value.trim(),
+    custom_prompt: document.getElementById('biz-prompt').value.trim()
   };
   try {
     const biz = await (await fetch('/api/business', { credentials: 'include' })).json();

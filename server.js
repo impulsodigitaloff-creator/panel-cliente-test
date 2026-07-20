@@ -505,7 +505,7 @@ app.put('/api/businesses/:id/info', requireAuth, (req, res) => {
   if (req.session.businessId !== parseInt(req.params.id, 10)) {
     return res.status(403).json({ error: 'No autorizado' });
   }
-  const { name, contact, phone, address, hours, instagram, human_phone, promo } = req.body;
+  const { name, contact, phone, address, hours, instagram, human_phone, promo, custom_prompt } = req.body;
   const data = {
     name: name !== undefined ? sanitizeString(name, 100) : undefined,
     contact: contact !== undefined ? sanitizeString(contact, 100) : undefined,
@@ -514,7 +514,8 @@ app.put('/api/businesses/:id/info', requireAuth, (req, res) => {
     hours: hours !== undefined ? sanitizeString(hours, 200) : undefined,
     instagram: instagram !== undefined ? sanitizeString(instagram, 100) : undefined,
     human_phone: human_phone !== undefined ? sanitizeString(human_phone, 50) : undefined,
-    promo: promo !== undefined ? sanitizeString(promo, 500) : undefined
+    promo: promo !== undefined ? sanitizeString(promo, 1000) : undefined,
+    custom_prompt: custom_prompt !== undefined ? custom_prompt.trim() : undefined
   };
   const filtered = Object.fromEntries(Object.entries(data).filter(([_, v]) => v !== undefined));
   if (Object.keys(filtered).length === 0) return res.status(400).json({ error: 'No hay datos para actualizar' });

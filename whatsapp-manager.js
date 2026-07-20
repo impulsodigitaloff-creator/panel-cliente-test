@@ -158,9 +158,13 @@ function getServiceDescription(name) {
 }
 
 function buildSystemPrompt(businessId) {
+  const biz = db.getBusinessById(businessId);
+  // Si el negocio tiene un prompt personalizado, usarlo directamente
+  if (biz && biz.custom_prompt && biz.custom_prompt.trim()) {
+    return biz.custom_prompt.trim();
+  }
   const services = db.getServices(businessId);
   const employees = db.getEmployees(businessId);
-  const biz = db.getBusinessById(businessId);
   const bizName = (biz && biz.name) ? biz.name : 'nuestro salón';
   let srvList = services.map(s => {
     const desc = getServiceDescription(s.name);
