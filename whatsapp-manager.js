@@ -17,9 +17,9 @@ const WHISPER_MODEL = process.env.WHISPER_MODEL || (OPENAI_API_KEY ? 'whisper-1'
 // Reutilizamos el SDK de OpenAI apuntando a Groq para no agregar más dependencias ni claves.
 let openai = null;
 if (OPENAI_API_KEY) {
-  openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+  openai = new OpenAI({ apiKey: OPENAI_API_KEY, timeout: 30000 });
 } else if (GROQ_API_KEY) {
-  openai = new OpenAI({ apiKey: GROQ_API_KEY, baseURL: 'https://api.groq.com/openai/v1' });
+  openai = new OpenAI({ apiKey: GROQ_API_KEY, baseURL: 'https://api.groq.com/openai/v1', timeout: 30000 });
 }
 const VOICE_ENABLED = !!openai;
 const MAX_VOICE_SIZE_MB = 25;
