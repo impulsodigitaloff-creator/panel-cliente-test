@@ -27,8 +27,9 @@ function pruneExpiredSessions() {
 }
 setInterval(pruneExpiredSessions, 600000).unref();
 
-class SQLiteSessionStore {
-  constructor() { this.db = db; }
+const { EventEmitter } = require('events');
+class SQLiteSessionStore extends EventEmitter {
+  constructor() { super(); this.db = db; }
   get(sid, cb) {
     try {
       const row = this.db.prepare("SELECT data FROM sessions WHERE sid = ? AND (expires IS NULL OR expires > datetime('now', '-3 hours'))").get(sid);
