@@ -894,7 +894,11 @@ async function renderWAConnected(el) {
       <div class="wa-sidebar">
         <div class="wa-header">
           <span>💬 Conversaciones</span>
-          <button class="btn btn-sm btn-danger" onclick="disconnectWA()">Desconectar</button>
+          <div style="display:flex;gap:4px;">
+            <button class="btn btn-sm btn-secondary" onclick="reconnectWA()" title="Reconectar bot">🔄</button>
+            <button class="btn btn-sm btn-danger" onclick="clearAllChats()" title="Eliminar todos los chats">🗑️</button>
+            <button class="btn btn-sm btn-danger" onclick="disconnectWA()">Desconectar</button>
+          </div>
         </div>
         <div id="wa-conv-items" class="wa-conv-list">
           ${convs.length === 0 ? '<div style="padding:30px;text-align:center;color:var(--text-muted);font-size:13px;">Sin conversaciones aún</div>' :
@@ -980,6 +984,25 @@ async function disconnectWA() {
     await api('/api/whatsapp/disconnect', { method: 'POST' });
     waSelectedConv = null;
     renderWhatsApp();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function clearAllChats() {
+  if (!confirm('¿Eliminar TODOS los chats y mensajes?')) return;
+  try {
+    await api('/api/whatsapp/conversations', { method: 'DELETE' });
+    waSelectedConv = null;
+    toast('Chats eliminados', 'success');
+    renderWhatsApp();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function reconnectWA() {
+  if (!confirm('¿Reconectar bot de WhatsApp?')) return;
+  try {
+    await api('/api/whatsapp/reconnect', { method: 'POST' });
+    toast('Reconectando...', 'success');
+    setTimeout(() => renderWhatsApp(), 3000);
   } catch (err) { toast(err.message, 'error'); }
 }
 

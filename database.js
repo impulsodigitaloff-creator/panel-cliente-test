@@ -743,6 +743,17 @@ const dbMethods = {
     db.prepare('DELETE FROM wa_messages WHERE conversation_id = ?').run(id);
     db.prepare('DELETE FROM wa_outbox WHERE conversation_id = ?').run(id);
     db.prepare('DELETE FROM wa_conversations WHERE id = ?').run(id);
+  },
+  deleteAllWACoversations(businessId) {
+    const ids = db.prepare('SELECT id FROM wa_conversations WHERE business_id = ?').all(businessId).map(r => r.id);
+    const delMsg = db.prepare('DELETE FROM wa_messages WHERE conversation_id = ?');
+    const delOut = db.prepare('DELETE FROM wa_outbox WHERE conversation_id = ?');
+    const delCon = db.prepare('DELETE FROM wa_conversations WHERE id = ?');
+    for (const id of ids) {
+      delMsg.run(id);
+      delOut.run(id);
+      delCon.run(id);
+    }
   }
 };
 

@@ -685,6 +685,21 @@ app.delete('/api/whatsapp/conversations/:id', requireAuth, (req, res) => {
   res.json({ success: true });
 });
 
+app.delete('/api/whatsapp/conversations', requireAuth, (req, res) => {
+  const businessId = req.session.businessId;
+  db.deleteAllWACoversations(businessId);
+  res.json({ success: true, message: 'Todos los chats eliminados' });
+});
+
+app.post('/api/whatsapp/reconnect', requireAuth, (req, res) => {
+  const businessId = req.session.businessId;
+  wa.stopConnection(businessId);
+  setTimeout(() => {
+    wa.initConnection(businessId);
+    res.json({ success: true, message: 'Reconectando...' });
+  }, 1000);
+});
+
 // Serve frontend
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
