@@ -44,7 +44,10 @@ function toast(msg, type = 'info') {
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
 function openModal(id) { document.getElementById(id).classList.add('open'); }
 
-function todayStr() { const d = new Date(); d.setHours(d.getHours() - 3); return d.toISOString().split('T')[0]; }
+function todayStr() {
+  const d = new Date();
+  return new Intl.DateTimeFormat('es-AR', { timeZone: 'America/Argentina/San_Juan', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d).split('/').reverse().join('-');
+}
 
 function formatTime(t) {
   if (!t) return '';
@@ -66,8 +69,8 @@ function formatCurrency(n) {
 function statusBadge(status) {
   const map = {
     pending: '<span class="badge badge-pending">Pendiente</span>',
-    confirmed: '<span class="badge badge-active">Confirmado</span>',
-    in_progress: '<span class="badge badge-active">En curso</span>',
+    confirmed: '<span class="badge badge-confirmed">Confirmado</span>',
+    in_progress: '<span class="badge badge-in_progress">En curso</span>',
     completed: '<span class="badge badge-completed">Completado</span>',
     cancelled: '<span class="badge badge-cancelled">Cancelado</span>'
   };
@@ -1206,6 +1209,7 @@ async function deleteService(id) {
 
 async function saveBusinessInfo() {
   const data = {
+    name: document.getElementById('biz-name').value.trim(),
     instagram: document.getElementById('biz-instagram').value.trim(),
     address: document.getElementById('biz-address').value.trim(),
     human_phone: document.getElementById('biz-phone').value.trim(),

@@ -201,9 +201,11 @@ Reglas CRÍTICAS:
 - Si no podés resolver algo: "Perdón, déjame derivarte con un asesor 🙏"
 - Si pide hablar con un humano: ${phone} 📞
 - Si pide la ubicación: ${address} (${mapsLink}) 📍
-- Cuando confirmes un turno, INCLUÍ siempre: fecha, hora, servicio, nombre del cliente, dirección y que puede cancelar/reprogramar por WhatsApp.
+- Cuando confirmes un turno NUEVO, INCLUÍ siempre: fecha, hora, servicio, nombre del cliente, dirección y que puede cancelar/reprogramar por WhatsApp.
 - REGLA DE AGENDADO:apenas tengas TODOS los datos (nombre, fecha, hora y servicio), agregá al final de tu mensaje EXACTAMENTE esta línea oculta:\n[AGENDAR nombre=NOMBRE fecha=YYYY-MM-DD hora=HH:MM servicio=SERVICIO]\nNo hace falta pedir teléfono, se usa el de WhatsApp automáticamente.
 - NUNCA agregues la línea [AGENDAR ...] si te falta algún dato. Primero preguntá lo que falta.
+- NUNCA hables de turnos PASADOS ni digas "recordá que tenés un turno". Si el cliente ya tuvo un turno, no lo menciones a menos que el cliente pregunte explícitamente por él.
+- NUNCA inventes turnos existentes. No digas frases como "recuerda que tu turno es el día..." porque eso confunde al cliente. Cada nuevo mensaje es una NUEVA consulta.
 
 Ejemplo cuando ya tenés todo: [AGENDAR nombre=Augusto fecha=2026-07-20 hora=11:30 servicio=Corte]
 
@@ -781,8 +783,8 @@ async function processReminders() {
     for (const biz of businesses) {
       const conn = connections.get(biz.id);
       if (!conn) continue;
-      const mapsLink = 'https://maps.google.com/?q=Mendoza+Sur+340+J5402GUH+San+Juan+Argentina';
       const address = biz.address || 'Mendoza Sur 340, J5402GUH, San Juan, Argentina';
+      const mapsLink = 'https://maps.google.com/?q=' + encodeURIComponent(address);
       const bizJid = biz.phone.includes('@') ? biz.phone : (biz.phone ? biz.phone + '@s.whatsapp.net' : null);
 
       async function sendReminder(appt, type, clientMsg, bizMsg) {

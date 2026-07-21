@@ -337,7 +337,15 @@ const dbMethods = {
     return r.lastInsertRowid;
   },
   updateCustomer(id, data) {
-    db.prepare('UPDATE customers SET name=?, phone=?, email=?, notes=? WHERE id=?').run(data.name, data.phone, data.email, data.notes, id);
+    const fields = [];
+    const vals = [];
+    if (data.name !== undefined) { fields.push('name=?'); vals.push(data.name); }
+    if (data.phone !== undefined) { fields.push('phone=?'); vals.push(data.phone); }
+    if (data.email !== undefined) { fields.push('email=?'); vals.push(data.email); }
+    if (data.notes !== undefined) { fields.push('notes=?'); vals.push(data.notes); }
+    if (fields.length === 0) return;
+    vals.push(id);
+    db.prepare(`UPDATE customers SET ${fields.join(',')} WHERE id=?`).run(...vals);
   },
   deleteCustomer(id) {
     db.prepare('DELETE FROM customers WHERE id = ?').run(id);
@@ -354,7 +362,13 @@ const dbMethods = {
     return db.prepare('INSERT INTO employees (business_id, name, phone) VALUES (?, ?, ?)').run(data.business_id, data.name, data.phone).lastInsertRowid;
   },
   updateEmployee(id, data) {
-    db.prepare('UPDATE employees SET name=?, phone=? WHERE id=?').run(data.name, data.phone, id);
+    const fields = [];
+    const vals = [];
+    if (data.name !== undefined) { fields.push('name=?'); vals.push(data.name); }
+    if (data.phone !== undefined) { fields.push('phone=?'); vals.push(data.phone); }
+    if (fields.length === 0) return;
+    vals.push(id);
+    db.prepare(`UPDATE employees SET ${fields.join(',')} WHERE id=?`).run(...vals);
   },
   deleteEmployee(id) {
     db.prepare('DELETE FROM employees WHERE id = ?').run(id);
@@ -509,12 +523,23 @@ const dbMethods = {
   },
   updateAppointment(id, data) {
     const existing = db.prepare('SELECT business_id, date, time FROM appointments WHERE id = ?').get(id);
-    if (existing && (existing.date !== data.date || existing.time !== data.time)) {
+    if (existing && data.date && data.time && (existing.date !== data.date || existing.time !== data.time)) {
       if (this.isAppointmentSlotOccupied(existing.business_id, data.date, data.time, id)) {
         throw new Error('El horario ya está ocupado');
       }
     }
-    db.prepare('UPDATE appointments SET customer_id=?, service_id=?, employee_id=?, date=?, time=?, status=?, notes=? WHERE id=?').run(data.customer_id, data.service_id, data.employee_id, data.date, data.time, data.status, data.notes, id);
+    const fields = [];
+    const vals = [];
+    if (data.customer_id !== undefined) { fields.push('customer_id=?'); vals.push(data.customer_id); }
+    if (data.service_id !== undefined) { fields.push('service_id=?'); vals.push(data.service_id); }
+    if (data.employee_id !== undefined) { fields.push('employee_id=?'); vals.push(data.employee_id); }
+    if (data.date !== undefined) { fields.push('date=?'); vals.push(data.date); }
+    if (data.time !== undefined) { fields.push('time=?'); vals.push(data.time); }
+    if (data.status !== undefined) { fields.push('status=?'); vals.push(data.status); }
+    if (data.notes !== undefined) { fields.push('notes=?'); vals.push(data.notes); }
+    if (fields.length === 0) return;
+    vals.push(id);
+    db.prepare(`UPDATE appointments SET ${fields.join(',')} WHERE id=?`).run(...vals);
   },
   updateAppointmentStatus(id, status) {
     const tx = db.transaction(() => {

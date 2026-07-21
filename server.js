@@ -130,7 +130,7 @@ function validatePositiveNumber(n) {
 }
 
 function validateStatus(status) {
-  return ['pending', 'confirmed', 'completed', 'cancelled'].includes(status);
+  return ['pending', 'confirmed', 'in_progress', 'completed', 'cancelled'].includes(status);
 }
 
 function sanitizeString(str, maxLen = 500) {
@@ -237,9 +237,14 @@ app.put('/api/customers/:id', requireAuth, (req, res) => {
   const { name, phone, email, notes } = req.body;
   const cleanName = sanitizeString(name, 100);
   if (!cleanName) return res.status(400).json({ error: 'Nombre requerido' });
-  const cleanEmail = email ? sanitizeString(email, 100).toLowerCase() : '';
+  const cleanEmail = email !== undefined ? (email ? sanitizeString(email, 100).toLowerCase() : '') : undefined;
   if (cleanEmail && !validateEmail(cleanEmail)) return res.status(400).json({ error: 'Email inválido' });
-  db.updateCustomer(req.params.id, { name: cleanName, phone: sanitizeString(phone, 50), email: cleanEmail, notes: sanitizeString(notes, 1000) });
+  db.updateCustomer(req.params.id, {
+    name: cleanName,
+    phone: phone !== undefined ? sanitizeString(phone, 50) : undefined,
+    email: cleanEmail,
+    notes: notes !== undefined ? sanitizeString(notes, 1000) : undefined
+  });
   res.json({ success: true });
 });
 
@@ -396,7 +401,7 @@ app.put('/api/appointments/:id', requireAuth, (req, res) => {
     if (!emp) return res.status(400).json({ error: 'Empleado inválido' });
   }
   try {
-    db.updateAppointment(id, { customer_id, service_id, employee_id, date, time, status, notes: sanitizeString(notes, 1000) });
+    db.updateAppointment(id, { customer_id, service_id, employee_id, date, time, status, notes: notes !== undefined ? sanitizeString(notes, 1000) : undefined });
     res.json({ success: true });
   } catch (e) {
     return res.status(409).json({ error: e.message || 'Horario ocupado' });
