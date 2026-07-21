@@ -27,8 +27,8 @@ function pruneExpiredSessions() {
 }
 setInterval(pruneExpiredSessions, 600000).unref();
 
-const { EventEmitter } = require('events');
-class SQLiteSessionStore extends EventEmitter {
+const SessionStore = require('express-session').Store;
+class SQLiteSessionStore extends SessionStore {
   constructor() { super(); this.db = db; }
   get(sid, cb) {
     try {
