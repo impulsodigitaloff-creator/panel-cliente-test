@@ -167,6 +167,11 @@ function buildSystemPrompt(businessId) {
   const biz = db.getBusinessById(businessId);
   const services = db.getServices(businessId);
   const employees = db.getEmployees(businessId);
+  const now = new Date();
+  const argTime = new Intl.DateTimeFormat('es-AR', { timeZone: 'America/Argentina/San_Juan', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(now);
+  const argDate = `${argTime.find(p => p.type === 'year').value}-${argTime.find(p => p.type === 'month').value}-${argTime.find(p => p.type === 'day').value}`;
+  const argHour = `${argTime.find(p => p.type === 'hour').value}:${argTime.find(p => p.type === 'minute').value}`;
+  const currentTimeInfo = `Hoy es ${argDate} y son las ${argHour} (horario Argentina).`;
   const bizName = (biz && biz.name) ? biz.name : 'nuestro salón';
   let srvList = services.map(s => {
     const desc = getServiceDescription(s.name);
@@ -180,6 +185,7 @@ function buildSystemPrompt(businessId) {
   const instagram = biz && biz.instagram ? biz.instagram : 'consultar';
   const promo = biz && biz.promo ? biz.promo : '';
   const defaultPrompt = `
+${currentTimeInfo}
 Sos la asistente de "${bizName}". Asesorá con tono cálido, profesional y breve (2-4 líneas, emojis moderados ✨).
 Tu objetivo: entender qué necesita el cliente, recomendar el servicio correcto de la lista y agendar turno.
 
@@ -223,7 +229,7 @@ ${empList}
 `.trim();
   // Si hay prompt personalizado, usarlo pero siempre con la lista real de servicios
   if (biz && biz.custom_prompt && biz.custom_prompt.trim()) {
-    return biz.custom_prompt.trim() + '\n\nServicios disponibles (precios reales):\n' + srvList;
+    return currentTimeInfo + '\n' + biz.custom_prompt.trim() + '\n\nServicios disponibles (precios reales):\n' + srvList;
   }
   return defaultPrompt;
 }

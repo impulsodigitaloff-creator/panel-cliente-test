@@ -497,9 +497,13 @@ function renderAppointmentsList(el) {
 }
 
 function changeDate(delta) {
-  const d = new Date(state.currentDate);
-  d.setDate(d.getDate() + delta);
-  state.currentDate = d.toISOString().split('T')[0];
+  const [y, m, d] = state.currentDate.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + delta);
+  const y2 = dt.getUTCFullYear();
+  const m2 = String(dt.getUTCMonth() + 1).padStart(2, '0');
+  const d2 = String(dt.getUTCDate()).padStart(2, '0');
+  state.currentDate = `${y2}-${m2}-${d2}`;
   loadAppointments();
 }
 
