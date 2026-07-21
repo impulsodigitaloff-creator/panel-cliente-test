@@ -15,6 +15,46 @@ db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 db.pragma('busy_timeout = 5000');
 
+// Session store persistente (express-session)
+db.exec(`CREATE TABLE IF NOT EXISTS sessions (
+  sid TEXT PRIMARY KEY,
+  expires DATETIME,
+  data TEXT
+)`);
+
+function pruneExpiredSessions() {
+  db.prepare("DELETE FROM sessions WHERE expires IS NOT NULL AND expires <= datetime('now', '-3 hours')").run();
+}
+setInterval(pruneExpiredSessions, 600000).unref();
+
+const SessionStore = require('express-session').Store;
+class SQLiteSessionStore extends SessionStore {
+  get(sid, cb) {
+    try {
+      const row = db.prepare('SELECT data FROM sessions WHERE sid = ? AND (expires IS NULL OR expires > datetime(\'now\', \'-3 hours\'))').get(sid);
+      cb(null, row ? JSON.parse(row.data) : null);
+    } catch (e) { cb(e); }
+  }
+  set(sid, session, cb) {
+    try {
+      const expires = session.cookie?.expires ? new Date(session.cookie.expires).toISOString().replace('T', ' ').split('.')[0] : null;
+      const data = JSON.stringify(session);
+      db.prepare('REPLACE INTO sessions (sid, expires, data) VALUES (?, ?, ?)').run(sid, expires, data);
+      cb(null);
+    } catch (e) { cb(e); }
+  }
+  destroy(sid, cb) {
+    try { db.prepare('DELETE FROM sessions WHERE sid = ?').run(sid); cb(null); } catch (e) { cb(e); }
+  }
+  touch(sid, session, cb) {
+    try {
+      const expires = session.cookie?.expires ? new Date(session.cookie.expires).toISOString().replace('T', ' ').split('.')[0] : null;
+      db.prepare('UPDATE sessions SET expires = ? WHERE sid = ?').run(expires, sid);
+      cb(null);
+    } catch (e) { cb(e); }
+  }
+}
+
 function sanitizeText(input, maxLength = 2000) {
   if (typeof input !== 'string') return '';
   return input.trim().slice(0, maxLength);
@@ -709,4 +749,5 @@ const dbMethods = {
 // Exportamos los wrappers pero mantenemos acceso a métodos raw de better-sqlite3
 const exported = Object.create(db);
 Object.assign(exported, dbMethods);
+exported.SQLiteSessionStore = SQLiteSessionStore;
 module.exports = exported;
