@@ -37,14 +37,20 @@ function getAuthPath(businessId) {
   return p;
 }
 
+function parseArgentinaDate(date, time) {
+  const [y, m, d] = date.split('-').map(Number);
+  const [hh, mm] = time.split(':').map(Number);
+  return new Date(Date.UTC(y, m - 1, d, hh + 3, mm));
+}
+
 function isBusinessOpen(date, time) {
-  const d = new Date(date + 'T' + time);
-  const day = d.getDay(); // 0=domingo, 1=lunes, ..., 6=sábado
+  const d = parseArgentinaDate(date, time);
+  const day = d.getUTCDay();
   if (day === 0) return false;
   const [h, m] = time.split(':').map(Number);
   const minutes = h * 60 + m;
-  const open = 9 * 60 + 30;  // 9:30
-  const close = 20 * 60;     // 20:00
+  const open = 9 * 60 + 30;
+  const close = 20 * 60;
   return minutes >= open && minutes < close;
 }
 
@@ -324,21 +330,21 @@ async function callLLM(history, businessId, phone, pushName) {
 
     const systemPrompt = buildSystemPrompt(businessId);
 
-    // Intentar Gemini primero
-    if (gemini) {
-      try {
-        return await callGemini(systemPrompt, history);
-      } catch (err) {
-        console.warn('[bot] Gemini falló, usando Groq como fallback:', err.message);
-      }
-    }
-
-    // Fallback a Groq
+    // Usar Groq primero (más rápido, menos rate limiting)
     if (GROQ_API_KEY) {
       try {
         return await callGroq(systemPrompt, history);
       } catch (err) {
-        console.error('[bot] Groq fallback también falló:', err.message);
+        console.warn('[bot] Groq falló, intentando Gemini como fallback:', err.message);
+      }
+    }
+
+    // Fallback a Gemini
+    if (gemini) {
+      try {
+        return await callGemini(systemPrompt, history);
+      } catch (err) {
+        console.error('[bot] Gemini también falló:', err.message);
       }
     }
 
@@ -363,8 +369,8 @@ function createAppointmentFromAI(businessId, args, phone, pushName) {
     if (!validateDate(args.fecha) || !validateTime(args.hora)) {
       return { success: false, message: 'Fecha u hora inválidas', args };
     }
-    // Validar que no sea en el pasado
-    const dt = new Date(`${args.fecha}T${args.hora}`);
+    // Validar que no sea en el pasado (usando Argentina UTC-3)
+    const dt = parseArgentinaDate(args.fecha, args.hora);
     if (isNaN(dt.getTime()) || dt.getTime() <= Date.now()) {
       return { success: false, reason: 'past', message: 'No se pueden agendar turnos en el pasado. Pedile al cliente una fecha y hora futura.', args };
     }
@@ -501,6 +507,9 @@ async function handleIncomingMessage(sock, msg, businessId) {
 
   // Detectar y ejecutar agendado
   const agendaMatch = parseAgendarTag(reply);
+  if (!agendaMatch && reply.includes('Turno confirmado')) {
+    console.log(`[bot] ⚠️ AI dijo "Turno confirmado" pero sin tag [AGENDAR...] — respuesta raw: ${reply.slice(0, 200)}`);
+  }
   if (agendaMatch) {
     const args = agendaMatch;
     if (args.nombre && args.fecha && args.hora && args.servicio) {
