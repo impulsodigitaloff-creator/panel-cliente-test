@@ -897,10 +897,10 @@ async function renderWAConnected(el) {
             convs.map(c => `
               <div class="wa-conv-item ${activeConv && activeConv.id == c.id ? 'active' : ''}" data-conv-id="${c.id}" onclick="selectWAConv(${c.id})">
                 <div class="wa-name">
-                  <span>${c.name || c.phone}</span>
+                  <span>${escapeHtml(c.name || c.phone)}</span>
                   <span class="mode-indicator">${c.mode === 'AI' ? '🤖' : '👤'}</span>
                 </div>
-                <div class="wa-last-msg">${c.last_message ? c.last_message.slice(0, 40) : 'Sin mensajes'}</div>
+                <div class="wa-last-msg">${c.last_message ? escapeHtml(c.last_message.slice(0, 40)) : 'Sin mensajes'}</div>
               </div>
             `).join('')}
         </div>
@@ -921,7 +921,7 @@ async function renderWAConnected(el) {
           <div id="wa-messages" class="wa-messages">
             ${activeConv.messages ? activeConv.messages.map(m => `
               <div class="wa-msg wa-msg-${m.role}">
-                <div class="wa-msg-text">${m.content}</div>
+                <div class="wa-msg-text">${escapeHtml(m.content)}</div>
                 <div class="wa-msg-time">${new Date(m.created_at).toLocaleTimeString('es-AR', {hour:'2-digit',minute:'2-digit'})}</div>
               </div>
             `).join('') : ''}
