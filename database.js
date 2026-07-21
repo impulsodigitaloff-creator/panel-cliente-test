@@ -27,29 +27,28 @@ function pruneExpiredSessions() {
 }
 setInterval(pruneExpiredSessions, 600000).unref();
 
-const SessionStore = require('express-session').Store;
-class SQLiteSessionStore extends SessionStore {
+class SQLiteSessionStore {
+  constructor() { this.db = db; }
   get(sid, cb) {
     try {
-      const row = db.prepare('SELECT data FROM sessions WHERE sid = ? AND (expires IS NULL OR expires > datetime(\'now\', \'-3 hours\'))').get(sid);
+      const row = this.db.prepare("SELECT data FROM sessions WHERE sid = ? AND (expires IS NULL OR expires > datetime('now', '-3 hours'))").get(sid);
       cb(null, row ? JSON.parse(row.data) : null);
     } catch (e) { cb(e); }
   }
   set(sid, session, cb) {
     try {
       const expires = session.cookie?.expires ? new Date(session.cookie.expires).toISOString().replace('T', ' ').split('.')[0] : null;
-      const data = JSON.stringify(session);
-      db.prepare('REPLACE INTO sessions (sid, expires, data) VALUES (?, ?, ?)').run(sid, expires, data);
+      this.db.prepare('REPLACE INTO sessions (sid, expires, data) VALUES (?, ?, ?)').run(sid, expires, JSON.stringify(session));
       cb(null);
     } catch (e) { cb(e); }
   }
   destroy(sid, cb) {
-    try { db.prepare('DELETE FROM sessions WHERE sid = ?').run(sid); cb(null); } catch (e) { cb(e); }
+    try { this.db.prepare('DELETE FROM sessions WHERE sid = ?').run(sid); cb(null); } catch (e) { cb(e); }
   }
   touch(sid, session, cb) {
     try {
       const expires = session.cookie?.expires ? new Date(session.cookie.expires).toISOString().replace('T', ' ').split('.')[0] : null;
-      db.prepare('UPDATE sessions SET expires = ? WHERE sid = ?').run(expires, sid);
+      this.db.prepare('UPDATE sessions SET expires = ? WHERE sid = ?').run(expires, sid);
       cb(null);
     } catch (e) { cb(e); }
   }
